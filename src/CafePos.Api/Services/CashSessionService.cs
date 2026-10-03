@@ -1,0 +1,98 @@
+using CafePos.Api.Data;
+using CafePos.Api.Domain;
+using CafePos.Api.Support;
+using CafePos.Shared;
+using Microsoft.EntityFrameworkCore;
+
+namespace CafePos.Api.Services;
+
+public class CashSessionService(AppDbContext db)
+{
+    public async Task<ServiceResult<CashSessionDto>> OpenAsync(decimal openingCash, Guid userId, CancellationToken ct)
+    {
+        if (openingCash < 0 || openingCash > 100_000) return ServiceResult<CashSessionDto>.Fail(400, "Fondo inicial inválido.");
+        if (await db.CashSessions.AnyAsync(s => s.CashierId == userId && s.ClosedAtUtc == null, ct))
+            return ServiceResult<CashSessionDto>.Fail(409, "Ya tienes un turno abierto.");
+
+        var session = new CashSession { CashierId = userId, OpenedAtUtc = DateTime.UtcNow, OpeningCash = Money.Round(openingCash) };
+        db.CashSessions.Add(session);
+        try { await db.SaveChangesAsync(ct); }
+        catch (DbUpdateException) { return ServiceResult<CashSessionDto>.Fail(409, "Ya tienes un turno abierto."); }
+        return ServiceResult<CashSessionDto>.Success((await LoadAsync(session.Id, ct))!, 201);
+    }
+
+    public async Task<CashSessionDto?> CurrentAsync(Guid userId, CancellationToken ct)
+    {
+        var id = await db.CashSessions.AsNoTracking().Where(s => s.CashierId == userId && s.ClosedAtUtc == null)
+            .Select(s => (Guid?)s.Id).FirstOrDefaultAsync(ct);
+        return id is null ? null : await LoadAsync(id.Value, ct);
+    }
+
+    public async Task<ServiceResult<SessionSummaryDto>> CloseAsync(Guid id, decimal countedCash, string? note,
+        Guid userId, bool isAdmin, CancellationToken ct)
+    {
+        var s = await db.CashSessions.FirstOrDefaultAsync(x => x.Id == id, ct);
+        if (s is null) return ServiceResult<SessionSummaryDto>.Fail(404, "Turno no encontrado.");
+        if (!isAdmin && s.CashierId != userId) return ServiceResult<SessionSummaryDto>.Fail(403, "Ese turno no es tuyo.");
+        if (s.ClosedAtUtc is not null) return ServiceResult<SessionSummaryDto>.Fail(409, "El turno ya está cerrado.");
+        if (countedCash < 0 || countedCash > 1_000_000) return ServiceResult<SessionSummaryDto>.Fail(400, "Monto contado inválido.");
+
+        var cashSales = await db.Sales.Where(x => x.CashSessionId == id && x.Status == SaleStatus.Valid && x.PaymentMethod == PaymentMethod.Efectivo)
+            .SumAsync(x => x.Total, ct);
+
+        s.ClosedAtUtc = DateTime.UtcNow;
+        s.CountedCash = Money.Round(countedCash);
+        s.ExpectedCash = s.OpeningCash + cashSales;
+        s.Difference = s.CountedCash - s.ExpectedCash;
+        s.Note = Text.Trunc(note, 200);
+
+        try { await db.SaveChangesAsync(ct); }
+        catch (DbUpdateConcurrencyException) { return ServiceResult<SessionSummaryDto>.Fail(409, "El turno ya fue cerrado."); }
+        return ServiceResult<SessionSummaryDto>.Success(await BuildSummaryAsync(id, ct));
+    }
+
+    public async Task<ServiceResult<SessionSummaryDto>> GetSummaryAsync(Guid id, Guid userId, bool isAdmin, CancellationToken ct)
+    {
+        var owner = await db.CashSessions.AsNoTracking().Where(s => s.Id == id).Select(s => (Guid?)s.CashierId).FirstOrDefaultAsync(ct);
+        if (owner is null) return ServiceResult<SessionSummaryDto>.Fail(404, "Turno no encontrado.");
+        if (!isAdmin && owner != userId) return ServiceResult<SessionSummaryDto>.Fail(403, "Ese turno no es tuyo.");
+        return ServiceResult<SessionSummaryDto>.Success(await BuildSummaryAsync(id, ct));
+    }
+
+    public async Task<PagedResult<CashSessionDto>> ListAsync(DateTime? from, DateTime? to, int page, int pageSize, CancellationToken ct)
+    {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+        var q = db.CashSessions.AsNoTracking().AsQueryable();
+        if (from is { } f) q = q.Where(s => s.OpenedAtUtc >= f);
+        if (to is { } t) q = q.Where(s => s.OpenedAtUtc < t);
+        var total = await q.CountAsync(ct);
+        var items = await q.OrderByDescending(s => s.OpenedAtUtc).Skip((page - 1) * pageSize).Take(pageSize)
+            .Select(s => new CashSessionDto(s.Id, s.CashierId, s.Cashier!.FullName, s.OpenedAtUtc, s.ClosedAtUtc,
+                s.OpeningCash, s.CountedCash, s.ExpectedCash, s.Difference)).ToListAsync(ct);
+        return new PagedResult<CashSessionDto>(items, total, page, pageSize);
+    }
+
+    private Task<CashSessionDto?> LoadAsync(Guid id, CancellationToken ct) =>
+        db.CashSessions.AsNoTracking().Where(s => s.Id == id)
+            .Select(s => new CashSessionDto(s.Id, s.CashierId, s.Cashier!.FullName, s.OpenedAtUtc, s.ClosedAtUtc,
+                s.OpeningCash, s.CountedCash, s.ExpectedCash, s.Difference))
+            .FirstOrDefaultAsync(ct);
+
+    private async Task<SessionSummaryDto> BuildSummaryAsync(Guid id, CancellationToken ct)
+    {
+        var session = (await LoadAsync(id, ct))!;
+        var groups = await db.Sales.AsNoTracking().Where(s => s.CashSessionId == id && s.Status == SaleStatus.Valid)
+            .GroupBy(s => s.PaymentMethod)
+            .Select(g => new { Method = g.Key, Count = g.Count(), Total = g.Sum(x => x.Total) }).ToListAsync(ct);
+        var byPayment = groups.OrderBy(g => g.Method).Select(g => new PaymentTotalDto(g.Method, g.Count, g.Total)).ToList();
+        var totalIgv = await db.Sales.AsNoTracking().Where(s => s.CashSessionId == id && s.Status == SaleStatus.Valid).SumAsync(s => s.Igv, ct);
+        var voidedCount = await db.Sales.AsNoTracking().CountAsync(s => s.CashSessionId == id && s.Status == SaleStatus.Voided, ct);
+        var voidedTotal = await db.Sales.AsNoTracking().Where(s => s.CashSessionId == id && s.Status == SaleStatus.Voided).SumAsync(s => s.Total, ct);
+
+        var cashSales = byPayment.Where(p => p.Method == PaymentMethod.Efectivo).Sum(p => p.Total);
+        // En un turno cerrado se conserva el esperado guardado al cierre (anular después no lo altera)
+        var expected = session.ExpectedCash ?? session.OpeningCash + cashSales;
+        return new SessionSummaryDto(session, cashSales, expected, byPayment.Sum(p => p.Total), totalIgv, byPayment, voidedCount, voidedTotal);
+    }
+}
