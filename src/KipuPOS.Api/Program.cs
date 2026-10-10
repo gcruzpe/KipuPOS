@@ -1,12 +1,12 @@
 using System.Text;
 using System.Text.Json.Serialization;
-using CafePos.Api.Auth;
-using CafePos.Api.Data;
-using CafePos.Api.Domain;
-using CafePos.Api.Endpoints;
-using CafePos.Api.Services;
-using CafePos.Api.Support;
-using CafePos.Shared;
+using KipuPOS.Api.Auth;
+using KipuPOS.Api.Data;
+using KipuPOS.Api.Domain;
+using KipuPOS.Api.Endpoints;
+using KipuPOS.Api.Services;
+using KipuPOS.Api.Support;
+using KipuPOS.Shared;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
@@ -24,12 +24,18 @@ builder.Services.AddDbContext<AppDbContext>(o =>
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Jwt"));
-builder.Services.Configure<TaxOptions>(builder.Configuration.GetSection("Tax"));
-builder.Services.Configure<BusinessOptions>(builder.Configuration.GetSection("Business"));
 builder.Services.AddSingleton<TokenService>();
 builder.Services.AddSingleton<IPasswordHasher<User>, PasswordHasher<User>>();
+
+// Multi-tenencia: el negocio sale del token; IGV y zona horaria salen del negocio
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<ITenantContext, HttpTenantContext>();
+builder.Services.AddScoped<TenantSettings>();
+builder.Services.AddScoped<DocumentNumberService>();
+
 builder.Services.AddScoped<SaleService>();
 builder.Services.AddScoped<CashSessionService>();
+builder.Services.AddScoped<MenuService>();
 
 var jwt = builder.Configuration.GetSection("Jwt").Get<JwtOptions>()!;
 if (jwt.Key.Length < 32) throw new InvalidOperationException("Jwt:Key debe tener al menos 32 caracteres.");
@@ -44,12 +50,16 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         ClockSkew = TimeSpan.FromMinutes(1),
     });
 
-// Con la marca "mcp" (debe cambiar contraseña) solo se puede llamar a change-password ("Authenticated")
-static bool NoPendingPasswordChange(AuthorizationHandlerContext c) => !c.User.HasClaim("mcp", "1");
+// Con la marca "mcp" (debe cambiar contraseña) solo se puede llamar a change-password ("Authenticated").
+// Los endpoints de un negocio exigen token con negocio; los de plataforma, rol Platform.
+static bool NoPendingPasswordChange(AuthorizationHandlerContext c) => !c.User.HasClaim(AppClaims.MustChangePassword, "1");
+static bool InTenant(AuthorizationHandlerContext c) => c.User.HasClaim(x => x.Type == AppClaims.Tenant);
 builder.Services.AddAuthorizationBuilder()
-    .SetDefaultPolicy(new AuthorizationPolicyBuilder().RequireAuthenticatedUser().RequireAssertion(NoPendingPasswordChange).Build())
+    .SetDefaultPolicy(new AuthorizationPolicyBuilder().RequireAuthenticatedUser()
+        .RequireAssertion(NoPendingPasswordChange).RequireAssertion(InTenant).Build())
     .AddPolicy("Authenticated", p => p.RequireAuthenticatedUser())
-    .AddPolicy("Admin", p => p.RequireRole(Roles.Admin).RequireAssertion(NoPendingPasswordChange));
+    .AddPolicy("Admin", p => p.RequireRole(Roles.Admin).RequireAssertion(NoPendingPasswordChange).RequireAssertion(InTenant))
+    .AddPolicy("Platform", p => p.RequireRole(Roles.Platform).RequireAssertion(NoPendingPasswordChange));
 
 var origins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>() ?? [];
 builder.Services.AddCors(o => o.AddDefaultPolicy(p => p.WithOrigins(origins).AllowAnyHeader().AllowAnyMethod()));
@@ -58,26 +68,27 @@ builder.Services.AddOpenApi();
 
 var app = builder.Build();
 
-// Migraciones + administrador inicial (debe cambiar la contraseña en el primer ingreso)
-using (var scope = app.Services.CreateScope())
+// Migraciones + primer usuario de plataforma (no se ejecuta cuando lo invoca `dotnet ef`)
+if (!EF.IsDesignTime)
 {
+    using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     await db.Database.MigrateAsync();
-    if (!await db.Users.AnyAsync())
+
+    if (!await db.Users.IgnoreQueryFilters().AnyAsync(u => u.Role == Roles.Platform))
     {
         var hasher = scope.ServiceProvider.GetRequiredService<IPasswordHasher<User>>();
-        var seedPassword = builder.Configuration["Seed:AdminPassword"];
+        var seedPassword = builder.Configuration["Seed:PlatformPassword"];
         if (string.IsNullOrEmpty(seedPassword) || seedPassword.Length < 8)
-            throw new InvalidOperationException("Seed:AdminPassword debe tener al menos 8 caracteres.");
-        var admin = new User
+            throw new InvalidOperationException("Seed:PlatformPassword debe tener al menos 8 caracteres.");
+
+        var platform = new User
         {
-            Username = (builder.Configuration["Seed:AdminUser"] ?? "admin").ToLowerInvariant(),
-            FullName = "Administrador",
-            Role = Roles.Admin,
-            MustChangePassword = true
+            Username = (builder.Configuration["Seed:PlatformUser"] ?? "platform").Trim().ToLowerInvariant(),
+            FullName = "Plataforma", Role = Roles.Platform, MustChangePassword = true
         };
-        admin.PasswordHash = hasher.HashPassword(admin, seedPassword);
-        db.Users.Add(admin);
+        platform.PasswordHash = hasher.HashPassword(platform, seedPassword);
+        db.Users.Add(platform);
         await db.SaveChangesAsync();
     }
 }
@@ -93,8 +104,11 @@ app.MapGet("/health", () => Results.Ok("ok")).AllowAnonymous();
 app.MapAuth();
 app.MapCatalog();
 app.MapSessions();
+app.MapMenu();
 app.MapSales();
 app.MapUsers();
+app.MapTenantAdmin();
+app.MapPlatform();
 app.MapReports();
 
 app.Run();

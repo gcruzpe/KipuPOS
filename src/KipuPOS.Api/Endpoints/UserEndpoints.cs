@@ -1,14 +1,14 @@
-using System.Security.Cryptography;
 using System.Security.Claims;
+using System.Security.Cryptography;
 using System.Text.RegularExpressions;
-using CafePos.Api.Data;
-using CafePos.Api.Domain;
-using CafePos.Api.Support;
-using CafePos.Shared;
+using KipuPOS.Api.Data;
+using KipuPOS.Api.Domain;
+using KipuPOS.Api.Support;
+using KipuPOS.Shared;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 
-namespace CafePos.Api.Endpoints;
+namespace KipuPOS.Api.Endpoints;
 
 public static partial class UserEndpoints
 {
@@ -17,13 +17,21 @@ public static partial class UserEndpoints
 
     private static string NewTempPassword() => RandomNumberGenerator.GetString("abcdefghjkmnpqrstuvwxyz23456789", 10);
 
+    // Un cajero necesita sucursal; la sucursal, si se indica, debe existir, estar activa y ser de este negocio
+    private static async Task<string?> ValidateBranchAsync(AppDbContext db, string role, Guid? branchId)
+    {
+        if (role == Roles.Cajero && branchId is null) return "Un cajero debe tener una sucursal asignada.";
+        if (branchId is { } id && !await db.Branches.AnyAsync(b => b.Id == id && b.Active)) return "Sucursal inválida.";
+        return null;
+    }
+
     public static void MapUsers(this IEndpointRouteBuilder app)
     {
         var g = app.MapGroup("/api/users").RequireAuthorization("Admin");
 
         g.MapGet("", async (AppDbContext db) =>
             await db.Users.AsNoTracking().OrderBy(u => u.FullName)
-                .Select(u => new UserDto(u.Id, u.FullName, u.Username, u.Role, u.Active, u.LastLoginUtc)).ToListAsync());
+                .Select(u => new UserDto(u.Id, u.FullName, u.Username, u.Role, u.Active, u.LastLoginUtc, u.BranchId)).ToListAsync());
 
         g.MapPost("", async (CreateUserRequest r, AppDbContext db, IPasswordHasher<User> hasher) =>
         {
@@ -31,10 +39,11 @@ public static partial class UserEndpoints
             var fullName = Text.Trunc(r.FullName, 120);
             if (fullName is null) return Results.BadRequest("El nombre es obligatorio.");
             if (!UsernameRegex().IsMatch(username)) return Results.BadRequest("Usuario inválido: 3 a 30 caracteres (letras, números, punto, guion).");
-            if (!Roles.All.Contains(r.Role)) return Results.BadRequest("Rol inválido.");
+            if (!Roles.TenantRoles.Contains(r.Role)) return Results.BadRequest("Rol inválido.");
+            if (await ValidateBranchAsync(db, r.Role, r.BranchId) is { } branchError) return Results.BadRequest(branchError);
             if (await db.Users.AnyAsync(u => u.Username == username)) return Results.Conflict("Ese usuario ya existe.");
 
-            var user = new User { Username = username, FullName = fullName, Role = r.Role, MustChangePassword = true };
+            var user = new User { Username = username, FullName = fullName, Role = r.Role, BranchId = r.BranchId, MustChangePassword = true };
             var temp = NewTempPassword();
             user.PasswordHash = hasher.HashPassword(user, temp);
             db.Users.Add(user);
@@ -44,10 +53,11 @@ public static partial class UserEndpoints
 
         g.MapPut("/{id:guid}", async (Guid id, UpdateUserRequest r, ClaimsPrincipal me, AppDbContext db) =>
         {
-            var user = await db.Users.FindAsync(id);
+            var user = await db.Users.FirstOrDefaultAsync(u => u.Id == id);
             if (user is null) return Results.NotFound();
             var fullName = Text.Trunc(r.FullName, 120);
-            if (fullName is null || !Roles.All.Contains(r.Role)) return Results.BadRequest("Datos inválidos.");
+            if (fullName is null || !Roles.TenantRoles.Contains(r.Role)) return Results.BadRequest("Datos inválidos.");
+            if (await ValidateBranchAsync(db, r.Role, r.BranchId) is { } branchError) return Results.BadRequest(branchError);
 
             var losesAdmin = user.Role == Roles.Admin && user.Active && (!r.Active || r.Role != Roles.Admin);
             if (losesAdmin)
@@ -58,14 +68,14 @@ public static partial class UserEndpoints
                     return Results.BadRequest("Debe quedar al menos un administrador activo.");
             }
 
-            user.FullName = fullName; user.Role = r.Role; user.Active = r.Active;
+            user.FullName = fullName; user.Role = r.Role; user.Active = r.Active; user.BranchId = r.BranchId;
             await db.SaveChangesAsync();
             return Results.Ok(user.ToDto());
         });
 
         g.MapPost("/{id:guid}/reset-password", async (Guid id, AppDbContext db, IPasswordHasher<User> hasher) =>
         {
-            var user = await db.Users.FindAsync(id);
+            var user = await db.Users.FirstOrDefaultAsync(u => u.Id == id);
             if (user is null) return Results.NotFound();
             var temp = NewTempPassword();
             user.PasswordHash = hasher.HashPassword(user, temp);

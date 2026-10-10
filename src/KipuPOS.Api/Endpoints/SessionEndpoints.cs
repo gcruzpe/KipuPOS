@@ -1,9 +1,9 @@
 using System.Security.Claims;
-using CafePos.Api.Services;
-using CafePos.Api.Support;
-using CafePos.Shared;
+using KipuPOS.Api.Services;
+using KipuPOS.Api.Support;
+using KipuPOS.Shared;
 
-namespace CafePos.Api.Endpoints;
+namespace KipuPOS.Api.Endpoints;
 
 public static class SessionEndpoints
 {
@@ -23,9 +23,10 @@ public static class SessionEndpoints
         g.MapGet("/{id:guid}/summary", async (Guid id, ClaimsPrincipal u, CashSessionService svc, CancellationToken ct) =>
             (await svc.GetSummaryAsync(id, u.GetUserId(), u.IsAdmin(), ct)).ToHttp());
 
-        // Admin: historial de cierres y diferencias
-        g.MapGet("", async (DateTimeOffset? from, DateTimeOffset? to, CashSessionService svc, CancellationToken ct, int page = 1, int pageSize = 25) =>
-            Results.Ok(await svc.ListAsync(from?.UtcDateTime, to?.UtcDateTime, page, pageSize, ct)))
+        // Admin: historial de cierres y diferencias (opcionalmente por sucursal)
+        g.MapGet("", async (DateTimeOffset? from, DateTimeOffset? to, Guid? branchId, CashSessionService svc, CancellationToken ct,
+                int page = 1, int pageSize = 25) =>
+            Results.Ok(await svc.ListAsync(from?.UtcDateTime, to?.UtcDateTime, branchId, page, pageSize, ct)))
             .RequireAuthorization("Admin");
     }
 }

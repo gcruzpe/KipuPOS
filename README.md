@@ -1,42 +1,65 @@
-# CafePos – API (v2: modelo completo del diseño)
+# KipuPOS – API (multi-negocio)
+
+Punto de venta en la nube para varios negocios (tenants), cada uno con una o más sucursales.
 
 ## Puesta en marcha
 ```
-dotnet new sln -n CafePos
-dotnet sln add src/CafePos.Shared src/CafePos.Api
+dotnet new sln -n KipuPOS
+dotnet sln add src/KipuPOS.Shared src/KipuPOS.Api
 dotnet tool install --global dotnet-ef
-dotnet ef migrations add Initial -p src/CafePos.Api      # si ya existía una "Initial" de la v1, bórrala antes
-dotnet run --project src/CafePos.Api
+dotnet ef migrations add Initial -p src/KipuPOS.Api      # borra antes cualquier carpeta Migrations de versiones anteriores
+dotnet run --project src/KipuPOS.Api --urls "https://localhost:7100;http://localhost:5100"
 ```
-Primer ingreso: usuario `Seed:AdminUser`, contraseña `Seed:AdminPassword`. El login responde `mustChangePassword: true`
-y con ese token solo funciona `POST /api/auth/change-password` (devuelve un token nuevo).
-En producción: `Jwt__Key`, `ConnectionStrings__Default`, `Seed__AdminPassword`, `Cors__Origins__0` por variables de entorno.
+Si ya tenías una base de datos de la versión anterior, bórrala: el esquema cambió (sin datos de producción todavía).
+
+Al arrancar se aplican las migraciones y se crea **un usuario de plataforma** (`Seed:PlatformUser` / `Seed:PlatformPassword`).
+Con ese usuario se crean los negocios (clientes). Flujo completo en `KipuPOS.http`.
+
+En producción, por variables de entorno: `Jwt__Key`, `ConnectionStrings__Default`, `Seed__PlatformPassword`, `Cors__Origins__0`.
+
+## Multi-tenencia
+- **Una base de datos compartida**; cada tabla de un negocio lleva `TenantId`.
+- Filtros globales de EF Core (`HasQueryFilter`): ninguna consulta ve datos de otro negocio. El negocio sale del **token** (claim `tid`), nunca del cuerpo de la petición.
+- `AppDbContext.SaveChanges` asigna el `TenantId` a lo nuevo y **lanza error** si algo intenta escribir en otro negocio.
+- `FindAsync` no se usa: se consulta con `FirstOrDefaultAsync` para que el filtro siempre aplique. El SQL manual (Dapper, `FromSql`) **no** hereda los filtros: hay que filtrar por `TenantId` a mano.
+- **Usuarios de plataforma** (rol `Platform`): sin negocio (`TenantId` null), inician sesión **sin** código de negocio, solo llegan a `/api/platform/*`.
+- IGV y zona horaria son **por negocio** (`Tenant.IgvRate`, `Tenant.UtcOffsetHours`).
+- Sucursales: el cajero pertenece a una; el administrador puede tener una y ver todas. La numeración de tickets es **correlativa por sucursal** (`DocumentCounters`, sin huecos: se asigna dentro de la misma transacción que la venta).
 
 ## Endpoints
 | Método y ruta | Quién | Notas |
 |---|---|---|
-| POST /api/auth/login | anónimo | bloqueo 15 min tras 5 fallos (423) |
+| POST /api/auth/login | anónimo | `tenantCode` vacío = plataforma. Bloqueo 15 min tras 5 fallos (423) |
 | POST /api/auth/change-password | autenticado | devuelve token nuevo |
-| GET /api/categories, /api/products | autenticado | `onlyActive`, `categoryId` |
+| GET/POST/PUT /api/platform/tenants | Platform | alta de negocio = negocio + sucursal + admin (contraseña temporal) |
+| GET /api/tenant | negocio | datos del propio negocio |
+| GET /api/branches · POST/PUT /api/branches | negocio · Admin | al menos una sucursal activa |
+| GET /api/categories, /api/products | negocio | `onlyActive`, `categoryId` |
 | POST/PUT/DELETE categorías y productos | Admin | DELETE = desactivar |
-| POST /api/sessions/open | autenticado | un turno abierto por cajero (409 si ya hay) |
-| GET /api/sessions/current | autenticado | 204 si no hay turno abierto |
-| POST /api/sessions/{id}/close | dueño o Admin | guarda contado, esperado y diferencia |
-| GET /api/sessions/{id}/summary | dueño o Admin | totales por método, IGV, anuladas |
-| GET /api/sessions | Admin | historial de cierres (from, to, page) |
-| POST /api/sales | autenticado | idempotente por `Id`; 201 nueva, 200 reenvío |
-| GET /api/sales | Admin: filtros; Cajero: solo su turno abierto | paginado (pageSize ≤ 100) |
-| GET /api/sales/{id} | Admin o dueño con turno abierto | líneas + auditoría |
-| POST /api/sales/{id}/void | Admin o dueño con turno abierto | motivo obligatorio |
-| POST /api/sales/{id}/reprint | Admin o dueño con turno abierto | registra auditoría; cliente imprime "COPIA" |
-| GET/POST/PUT /api/users, POST /api/users/{id}/reset-password | Admin | contraseña temporal, se muestra una vez |
-| GET /api/reports/summary, /top-products | Admin | `from` inclusivo, `to` exclusivo |
+| GET /api/menu/today | negocio | menú de la sucursal del usuario (Admin: `?branchId=`) |
+| PATCH /api/menu/entries/{id}/sold-out | negocio | cajero: solo hoy y su sucursal |
+| GET/PUT /api/menu/{fecha} · POST /api/menu/{fecha}/copy-from/{origen} | Admin | `?branchId=` opcional; copiar no sobrescribe (409) |
+| POST /api/sessions/open · GET current · POST {id}/close · GET {id}/summary | negocio | un turno abierto por cajero; la sucursal es la del usuario |
+| GET /api/sessions | Admin | historial de cierres (`branchId`, `from`, `to`) |
+| POST /api/sales | negocio | idempotente por `Id` (201 nueva, 200 reenvío) |
+| GET /api/sales | Admin: filtros; Cajero: su turno abierto | paginado (pageSize ≤ 100), `branchId` |
+| GET /api/sales/{id} · POST void · POST reprint | Admin o dueño con turno abierto | anular exige motivo |
+| GET/POST/PUT /api/users · POST {id}/reset-password | Admin | cajero requiere `branchId` |
+| GET /api/reports/summary, /top-products | Admin | `from` inclusivo, `to` exclusivo, `branchId` opcional |
 
-## Reglas de negocio implementadas
-- Precio y nombre salen del servidor (nunca del cliente) y se copian en cada línea.
-- `Product.Price` es SIN IGV. IGV = `Tax:IgvRate` × subtotal de la venta, redondeado a 2 decimales (AwayFromZero).
-- Las ventas anuladas nunca se borran: estado, motivo, usuario y hora, más un registro en `SaleAudits`.
-- Cajero: anula/reimprime solo ventas propias de su turno abierto. Admin: cualquiera.
+## Reglas de negocio
+- Precio y nombre salen del servidor y se copian en cada línea de venta.
+- `Product.Price` es SIN IGV. IGV = `Tenant.IgvRate` × subtotal de la venta, redondeado a 2 decimales (AwayFromZero).
+- Platos de menú (`IsMenuItem`): solo se venden si están en el menú de la sucursal en la fecha de la venta, al precio de ese día. Si no, 400. "Agotado" es un aviso para la caja; el servidor no rechaza por eso.
+- Táper: producto normal ("Táper"); el cliente lo agrega como una línea más al marcar "Para llevar".
+- Ventas anuladas: nunca se borran (estado, motivo, usuario, hora + `SaleAudits`).
+- Cajero: anula/reimprime solo ventas propias de su turno abierto. Admin: cualquiera de su negocio.
 - Turno cerrado: guarda el esperado al cierre; anular después no lo altera.
-- Nunca queda el sistema sin un administrador activo; nadie puede desactivarse a sí mismo.
+- Nunca queda un negocio sin administrador activo ni sin sucursal activa.
 - Enums como texto en JSON: los clientes deben registrar `JsonStringEnumConverter`.
+
+## Pendiente / limitaciones conocidas
+- Un negocio suspendido (`Active = false`) no puede iniciar sesión, pero los tokens ya emitidos siguen vigentes hasta expirar (8 h).
+- Sin límite de intentos por IP en el login (solo bloqueo por usuario): agregar `AddRateLimiter` antes de salir a producción.
+- Falta una prueba automática que verifique que un negocio no puede leer ni escribir datos de otro.
+- Facturación electrónica (SUNAT) no está implementada: los tickets son comprobantes internos.

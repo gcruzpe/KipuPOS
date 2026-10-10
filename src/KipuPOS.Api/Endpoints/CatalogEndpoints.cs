@@ -1,9 +1,9 @@
-using CafePos.Api.Data;
-using CafePos.Api.Domain;
-using CafePos.Shared;
+using KipuPOS.Api.Data;
+using KipuPOS.Api.Domain;
+using KipuPOS.Shared;
 using Microsoft.EntityFrameworkCore;
 
-namespace CafePos.Api.Endpoints;
+namespace KipuPOS.Api.Endpoints;
 
 public static class CatalogEndpoints
 {
@@ -23,7 +23,7 @@ public static class CatalogEndpoints
             await db.Products.AsNoTracking()
                 .Where(p => (categoryId == null || p.CategoryId == categoryId) && (onlyActive != true || p.Active))
                 .OrderBy(p => p.Name)
-                .Select(p => new ProductDto(p.Id, p.CategoryId, p.Name, p.Price, p.Active)).ToListAsync());
+                .Select(p => new ProductDto(p.Id, p.CategoryId, p.Name, p.Price, p.Active, p.IsMenuItem)).ToListAsync());
 
         // Escritura: solo Admin
         admin.MapPost("/categories", async (CategoryUpsert r, AppDbContext db) =>
@@ -37,7 +37,7 @@ public static class CatalogEndpoints
 
         admin.MapPut("/categories/{id:guid}", async (Guid id, CategoryUpsert r, AppDbContext db) =>
         {
-            var c = await db.Categories.FindAsync(id);
+            var c = await db.Categories.FirstOrDefaultAsync(x => x.Id == id);
             if (c is null) return Results.NotFound();
             if (string.IsNullOrWhiteSpace(r.Name)) return Results.BadRequest("Nombre requerido.");
             c.Name = r.Name.Trim(); c.SortOrder = r.SortOrder; c.Active = r.Active;
@@ -49,27 +49,27 @@ public static class CatalogEndpoints
         {
             if (string.IsNullOrWhiteSpace(r.Name) || r.Price < 0) return Results.BadRequest("Datos inválidos.");
             if (!await db.Categories.AnyAsync(c => c.Id == r.CategoryId)) return Results.BadRequest("Categoría inexistente.");
-            var p = new Product { CategoryId = r.CategoryId, Name = r.Name.Trim(), Price = decimal.Round(r.Price, 2), Active = r.Active };
+            var p = new Product { CategoryId = r.CategoryId, Name = r.Name.Trim(), Price = decimal.Round(r.Price, 2), Active = r.Active, IsMenuItem = r.IsMenuItem };
             db.Products.Add(p);
             await db.SaveChangesAsync();
-            return Results.Created($"/api/products/{p.Id}", new ProductDto(p.Id, p.CategoryId, p.Name, p.Price, p.Active));
+            return Results.Created($"/api/products/{p.Id}", new ProductDto(p.Id, p.CategoryId, p.Name, p.Price, p.Active, p.IsMenuItem));
         });
 
         admin.MapPut("/products/{id:guid}", async (Guid id, ProductUpsert r, AppDbContext db) =>
         {
-            var p = await db.Products.FindAsync(id);
+            var p = await db.Products.FirstOrDefaultAsync(x => x.Id == id);
             if (p is null) return Results.NotFound();
             if (string.IsNullOrWhiteSpace(r.Name) || r.Price < 0) return Results.BadRequest("Datos inválidos.");
             if (!await db.Categories.AnyAsync(c => c.Id == r.CategoryId)) return Results.BadRequest("Categoría inexistente.");
-            p.CategoryId = r.CategoryId; p.Name = r.Name.Trim(); p.Price = decimal.Round(r.Price, 2); p.Active = r.Active;
+            p.CategoryId = r.CategoryId; p.Name = r.Name.Trim(); p.Price = decimal.Round(r.Price, 2); p.Active = r.Active; p.IsMenuItem = r.IsMenuItem;
             await db.SaveChangesAsync();
-            return Results.Ok(new ProductDto(p.Id, p.CategoryId, p.Name, p.Price, p.Active));
+            return Results.Ok(new ProductDto(p.Id, p.CategoryId, p.Name, p.Price, p.Active, p.IsMenuItem));
         });
 
         // No se borra: se desactiva, para conservar el historial de ventas
         admin.MapDelete("/products/{id:guid}", async (Guid id, AppDbContext db) =>
         {
-            var p = await db.Products.FindAsync(id);
+            var p = await db.Products.FirstOrDefaultAsync(x => x.Id == id);
             if (p is null) return Results.NotFound();
             p.Active = false;
             await db.SaveChangesAsync();

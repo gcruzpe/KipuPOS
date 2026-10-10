@@ -1,11 +1,22 @@
 using System.Security.Claims;
-using CafePos.Api.Domain;
-using CafePos.Shared;
+using KipuPOS.Api.Domain;
+using KipuPOS.Shared;
 
-namespace CafePos.Api.Support;
+namespace KipuPOS.Api.Support;
 
-public class TaxOptions { public decimal IgvRate { get; set; } = 0.18m; }
-public class BusinessOptions { public int UtcOffsetHours { get; set; } = -5; } // Lima (sin horario de verano)
+// ITenantContext, HttpTenantContext y TenantSettings viven en Tenancy.cs.
+public static class AppClaims
+{
+    // Mismos nombres que lee HttpTenantContext ("tid" = negocio, "bid" = sucursal)
+    public const string Tenant = "tid";
+    public const string Branch = "bid";
+    public const string MustChangePassword = "mcp";
+}
+
+public static class DocumentTypes
+{
+    public const string Ticket = "Ticket";
+}
 
 public static class Money
 {
@@ -46,5 +57,7 @@ public static class Mapping
         s.Lines.OrderBy(l => l.Position)
             .Select(l => new SaleLineDto(l.ProductId, l.ProductName, l.UnitPrice, l.Quantity, l.Note, l.LineSubtotal)).ToList());
 
-    public static UserDto ToDto(this User u) => new(u.Id, u.FullName, u.Username, u.Role, u.Active, u.LastLoginUtc);
+    public static UserDto ToDto(this User u) => new(u.Id, u.FullName, u.Username, u.Role, u.Active, u.LastLoginUtc, u.BranchId);
+    public static TenantDto ToDto(this Tenant t) => new(t.Id, t.Code, t.Name, t.Ruc, t.Active, t.IgvRate, t.UtcOffsetHours, t.CreatedAtUtc);
+    public static BranchDto ToDto(this Branch b) => new(b.Id, b.Name, b.Address, b.Active);
 }

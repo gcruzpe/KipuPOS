@@ -1,0 +1,370 @@
+# Pruebas de la API KipuPOS. Funciona en Visual Studio 2022 (17.8+) y en VS Code con la extensión "REST Client".
+# Ejecuta cada bloque con "Send request", EN ORDEN. Cambia @today y @tomorrow por la fecha real (hora de Lima).
+#
+# Flujo: usuario de plataforma -> crea un negocio -> administrador del negocio -> sucursal, catálogo, cajero -> ventas.
+# Los dos primeros inicios de sesión usan la contraseña temporal; el cambio de contraseña devuelve un token ya válido.
+
+@baseUrl = https://localhost:7100
+@today = 2026-10-09
+@tomorrow = 2026-10-10
+@tenant = cafe-demo
+@saleId = 3f2b8a7e-5c1d-4e9a-9b6f-1a2b3c4d5e6f
+@saleId2 = 5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d
+
+### 0. Salud
+GET {{baseUrl}}/health
+
+### 1. Login de plataforma (SIN código de negocio). Usuario y clave de Seed en appsettings
+# @name loginPlatform
+POST {{baseUrl}}/api/auth/login
+Content-Type: application/json
+
+{ "username": "platform", "password": "CambiarAhora#2026" }
+
+### 2. Plataforma cambia su contraseña (obligatorio la primera vez)
+# @name platformAuth
+POST {{baseUrl}}/api/auth/change-password
+Authorization: Bearer {{loginPlatform.response.body.$.token}}
+Content-Type: application/json
+
+{ "currentPassword": "CambiarAhora#2026", "newPassword": "Plataforma#Nueva2026" }
+
+### 3. Plataforma crea un negocio (negocio + sucursal "Principal" + administrador)
+# @name newTenant
+POST {{baseUrl}}/api/platform/tenants
+Authorization: Bearer {{platformAuth.response.body.$.token}}
+Content-Type: application/json
+
+{ "code": "{{tenant}}", "name": "Cafetería Demo", "ruc": null, "branchName": "Principal", "adminUsername": "dueno", "adminFullName": "Dueño Demo" }
+
+### 4. Login del administrador del negocio (con código de negocio y la contraseña temporal)
+# @name loginAdmin
+POST {{baseUrl}}/api/auth/login
+Content-Type: application/json
+
+{ "tenantCode": "{{tenant}}", "username": "dueno", "password": "{{newTenant.response.body.$.temporaryPassword}}" }
+
+### 5. El administrador cambia su contraseña
+# @name adminAuth
+POST {{baseUrl}}/api/auth/change-password
+Authorization: Bearer {{loginAdmin.response.body.$.token}}
+Content-Type: application/json
+
+{ "currentPassword": "{{newTenant.response.body.$.temporaryPassword}}", "newPassword": "Dueno#Nuevo2026" }
+
+### 6. Datos del negocio y sucursales
+GET {{baseUrl}}/api/tenant
+Authorization: Bearer {{adminAuth.response.body.$.token}}
+
+###
+# @name branches
+GET {{baseUrl}}/api/branches
+Authorization: Bearer {{adminAuth.response.body.$.token}}
+
+### 6b. Crear una segunda sucursal
+# @name branch2
+POST {{baseUrl}}/api/branches
+Authorization: Bearer {{adminAuth.response.body.$.token}}
+Content-Type: application/json
+
+{ "name": "Sucursal Miraflores", "address": "Av. Larco 123", "active": true }
+
+### 7. Catálogo: categoría y producto (precio SIN IGV)
+# @name cat
+POST {{baseUrl}}/api/categories
+Authorization: Bearer {{adminAuth.response.body.$.token}}
+Content-Type: application/json
+
+{ "name": "Cafés", "sortOrder": 1, "active": true }
+
+###
+# @name product
+POST {{baseUrl}}/api/products
+Authorization: Bearer {{adminAuth.response.body.$.token}}
+Content-Type: application/json
+
+{ "categoryId": "{{cat.response.body.$.id}}", "name": "Cappuccino", "price": 10.00, "active": true }
+
+### 8. Crear cajero en la sucursal Principal (devuelve contraseña temporal)
+# @name newUser
+POST {{baseUrl}}/api/users
+Authorization: Bearer {{adminAuth.response.body.$.token}}
+Content-Type: application/json
+
+{ "fullName": "Lucía Paredes", "username": "lucia", "role": "Cajero", "branchId": "{{newTenant.response.body.$.branch.id}}" }
+
+### 8b. Cajero sin sucursal: debe dar 400
+POST {{baseUrl}}/api/users
+Authorization: Bearer {{adminAuth.response.body.$.token}}
+Content-Type: application/json
+
+{ "fullName": "Sin Sucursal", "username": "sinsucursal", "role": "Cajero", "branchId": null }
+
+### 9. Login del cajero y cambio de contraseña
+# @name loginCashier
+POST {{baseUrl}}/api/auth/login
+Content-Type: application/json
+
+{ "tenantCode": "{{tenant}}", "username": "lucia", "password": "{{newUser.response.body.$.temporaryPassword}}" }
+
+###
+# @name cashierAuth
+POST {{baseUrl}}/api/auth/change-password
+Authorization: Bearer {{loginCashier.response.body.$.token}}
+Content-Type: application/json
+
+{ "currentPassword": "{{newUser.response.body.$.temporaryPassword}}", "newPassword": "Lucia#Nuevo2026" }
+
+### 10. Abrir turno de caja (fondo S/ 100). La sucursal es la del cajero
+# @name session
+POST {{baseUrl}}/api/sessions/open
+Authorization: Bearer {{cashierAuth.response.body.$.token}}
+Content-Type: application/json
+
+{ "openingCash": 100.00 }
+
+### 10b. Abrir otro turno debe dar 409
+POST {{baseUrl}}/api/sessions/open
+Authorization: Bearer {{cashierAuth.response.body.$.token}}
+Content-Type: application/json
+
+{ "openingCash": 50.00 }
+
+### 11. Venta de 2 cappuccinos. Esperado: subtotal 20.00, IGV 3.60, total 23.60, number 1
+# Enviarla una SEGUNDA vez debe devolver 200 con la misma venta (idempotencia), no duplicarla.
+# @name sale
+POST {{baseUrl}}/api/sales
+Authorization: Bearer {{cashierAuth.response.body.$.token}}
+Content-Type: application/json
+
+{
+  "id": "{{saleId}}",
+  "cashSessionId": "{{session.response.body.$.id}}",
+  "createdAtUtc": "{{$datetime iso8601}}",
+  "paymentMethod": "Efectivo",
+  "lines": [ { "productId": "{{product.response.body.$.id}}", "quantity": 2, "note": "sin azúcar" } ]
+}
+
+### 12. Ventas del turno, detalle y reimpresión (queda auditada)
+GET {{baseUrl}}/api/sales
+Authorization: Bearer {{cashierAuth.response.body.$.token}}
+
+###
+GET {{baseUrl}}/api/sales/{{saleId}}
+Authorization: Bearer {{cashierAuth.response.body.$.token}}
+
+###
+POST {{baseUrl}}/api/sales/{{saleId}}/reprint
+Authorization: Bearer {{cashierAuth.response.body.$.token}}
+
+### 13. MENÚ DEL DÍA: categoría, dos platos (precio habitual sin IGV) y táper
+# @name menuCat
+POST {{baseUrl}}/api/categories
+Authorization: Bearer {{adminAuth.response.body.$.token}}
+Content-Type: application/json
+
+{ "name": "Menú", "sortOrder": 9, "active": true }
+
+###
+# @name dishA
+POST {{baseUrl}}/api/products
+Authorization: Bearer {{adminAuth.response.body.$.token}}
+Content-Type: application/json
+
+{ "categoryId": "{{menuCat.response.body.$.id}}", "name": "Ají de gallina", "price": 12.00, "active": true, "isMenuItem": true }
+
+###
+# @name dishB
+POST {{baseUrl}}/api/products
+Authorization: Bearer {{adminAuth.response.body.$.token}}
+Content-Type: application/json
+
+{ "categoryId": "{{menuCat.response.body.$.id}}", "name": "Lomo saltado", "price": 14.00, "active": true, "isMenuItem": true }
+
+###
+# @name taper
+POST {{baseUrl}}/api/products
+Authorization: Bearer {{adminAuth.response.body.$.token}}
+Content-Type: application/json
+
+{ "categoryId": "{{menuCat.response.body.$.id}}", "name": "Táper", "price": 1.00, "active": true }
+
+### 13b. Vender un plato SIN menú cargado: debe dar 400
+POST {{baseUrl}}/api/sales
+Authorization: Bearer {{cashierAuth.response.body.$.token}}
+Content-Type: application/json
+
+{
+  "id": "0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d",
+  "cashSessionId": "{{session.response.body.$.id}}",
+  "createdAtUtc": "{{$datetime iso8601}}",
+  "paymentMethod": "Efectivo",
+  "lines": [ { "productId": "{{dishA.response.body.$.id}}", "quantity": 1 } ]
+}
+
+### 13c. El admin carga el menú de HOY en su sucursal (precios distintos por plato)
+PUT {{baseUrl}}/api/menu/{{today}}
+Authorization: Bearer {{adminAuth.response.body.$.token}}
+Content-Type: application/json
+
+{ "entries": [
+  { "productId": "{{dishA.response.body.$.id}}", "price": 12.00 },
+  { "productId": "{{dishB.response.body.$.id}}", "price": 14.00 }
+] }
+
+### 13d. Menú de hoy (cajero)
+# @name menuToday
+GET {{baseUrl}}/api/menu/today
+Authorization: Bearer {{cashierAuth.response.body.$.token}}
+
+### 13e. Venta para llevar: Lomo saltado (14.00) + Táper (1.00). Esperado: subtotal 15.00, IGV 2.70, total 17.70, number 2
+POST {{baseUrl}}/api/sales
+Authorization: Bearer {{cashierAuth.response.body.$.token}}
+Content-Type: application/json
+
+{
+  "id": "{{saleId2}}",
+  "cashSessionId": "{{session.response.body.$.id}}",
+  "createdAtUtc": "{{$datetime iso8601}}",
+  "paymentMethod": "Yape",
+  "lines": [
+    { "productId": "{{dishB.response.body.$.id}}", "quantity": 1 },
+    { "productId": "{{taper.response.body.$.id}}", "quantity": 1 }
+  ]
+}
+
+### 13f. El cajero marca un plato como agotado (solo hoy y su sucursal)
+PATCH {{baseUrl}}/api/menu/entries/{{menuToday.response.body.$.entries[0].id}}/sold-out
+Authorization: Bearer {{cashierAuth.response.body.$.token}}
+Content-Type: application/json
+
+{ "soldOut": true }
+
+### 13g. El cajero NO puede cargar el menú: debe dar 403
+PUT {{baseUrl}}/api/menu/{{today}}
+Authorization: Bearer {{cashierAuth.response.body.$.token}}
+Content-Type: application/json
+
+{ "entries": [] }
+
+### 13h. El admin copia el menú de hoy a mañana
+POST {{baseUrl}}/api/menu/{{tomorrow}}/copy-from/{{today}}
+Authorization: Bearer {{adminAuth.response.body.$.token}}
+
+### 14. Anular sin motivo: debe dar 400. Con motivo: 200
+POST {{baseUrl}}/api/sales/{{saleId}}/void
+Authorization: Bearer {{cashierAuth.response.body.$.token}}
+Content-Type: application/json
+
+{ "reason": "" }
+
+###
+POST {{baseUrl}}/api/sales/{{saleId}}/void
+Authorization: Bearer {{cashierAuth.response.body.$.token}}
+Content-Type: application/json
+
+{ "reason": "Error de cobro" }
+
+### 14b. Reimprimir una anulada: debe dar 409
+POST {{baseUrl}}/api/sales/{{saleId}}/reprint
+Authorization: Bearer {{cashierAuth.response.body.$.token}}
+
+### 15. Resumen y cierre del turno
+GET {{baseUrl}}/api/sessions/{{session.response.body.$.id}}/summary
+Authorization: Bearer {{cashierAuth.response.body.$.token}}
+
+###
+POST {{baseUrl}}/api/sessions/{{session.response.body.$.id}}/close
+Authorization: Bearer {{cashierAuth.response.body.$.token}}
+Content-Type: application/json
+
+{ "countedCash": 100.00, "note": "prueba" }
+
+### 16. Admin: ventas anuladas, resumen, más vendidos, cierres y usuarios
+GET {{baseUrl}}/api/sales?status=Voided
+Authorization: Bearer {{adminAuth.response.body.$.token}}
+
+###
+GET {{baseUrl}}/api/reports/summary?from={{$datetime iso8601 -1 d}}&to={{$datetime iso8601 1 d}}
+Authorization: Bearer {{adminAuth.response.body.$.token}}
+
+###
+GET {{baseUrl}}/api/reports/top-products?from={{$datetime iso8601 -1 d}}&to={{$datetime iso8601 1 d}}
+Authorization: Bearer {{adminAuth.response.body.$.token}}
+
+###
+GET {{baseUrl}}/api/sessions
+Authorization: Bearer {{adminAuth.response.body.$.token}}
+
+###
+GET {{baseUrl}}/api/users
+Authorization: Bearer {{adminAuth.response.body.$.token}}
+
+### 17. PERMISOS. El cajero NO ve usuarios: 403
+GET {{baseUrl}}/api/users
+Authorization: Bearer {{cashierAuth.response.body.$.token}}
+
+### 17b. El administrador de un negocio NO entra a plataforma: 403
+GET {{baseUrl}}/api/platform/tenants
+Authorization: Bearer {{adminAuth.response.body.$.token}}
+
+### 17c. Plataforma NO opera dentro de un negocio: 403
+GET {{baseUrl}}/api/products
+Authorization: Bearer {{platformAuth.response.body.$.token}}
+
+### 18. AISLAMIENTO ENTRE NEGOCIOS. Crear un segundo negocio
+# @name otherTenant
+POST {{baseUrl}}/api/platform/tenants
+Authorization: Bearer {{platformAuth.response.body.$.token}}
+Content-Type: application/json
+
+{ "code": "otro-negocio", "name": "Otro Negocio", "ruc": null, "branchName": "Principal", "adminUsername": "dueno", "adminFullName": "Otro Dueño" }
+
+###
+# @name otherLogin
+POST {{baseUrl}}/api/auth/login
+Content-Type: application/json
+
+{ "tenantCode": "otro-negocio", "username": "dueno", "password": "{{otherTenant.response.body.$.temporaryPassword}}" }
+
+###
+# @name otherAuth
+POST {{baseUrl}}/api/auth/change-password
+Authorization: Bearer {{otherLogin.response.body.$.token}}
+Content-Type: application/json
+
+{ "currentPassword": "{{otherTenant.response.body.$.temporaryPassword}}", "newPassword": "Otro#Nuevo2026" }
+
+### 18a. El otro negocio NO ve productos ni usuarios del primero: lista vacía / solo los suyos
+GET {{baseUrl}}/api/products
+Authorization: Bearer {{otherAuth.response.body.$.token}}
+
+###
+GET {{baseUrl}}/api/users
+Authorization: Bearer {{otherAuth.response.body.$.token}}
+
+### 18b. ... ni una venta del primero por su id: debe dar 404
+GET {{baseUrl}}/api/sales/{{saleId2}}
+Authorization: Bearer {{otherAuth.response.body.$.token}}
+
+### 18c. ... ni crear un producto en una categoría del primero: debe dar 400 ("Categoría inexistente")
+POST {{baseUrl}}/api/products
+Authorization: Bearer {{otherAuth.response.body.$.token}}
+Content-Type: application/json
+
+{ "categoryId": "{{cat.response.body.$.id}}", "name": "Intruso", "price": 1.00 }
+
+### 18d. El usuario "dueno" existe en los dos negocios (único POR negocio). Cada token ve su propio negocio
+GET {{baseUrl}}/api/tenant
+Authorization: Bearer {{otherAuth.response.body.$.token}}
+
+### 19. Plataforma: lista de negocios y suspender uno (suspendido no puede iniciar sesión)
+GET {{baseUrl}}/api/platform/tenants
+Authorization: Bearer {{platformAuth.response.body.$.token}}
+
+###
+PUT {{baseUrl}}/api/platform/tenants/{{otherTenant.response.body.$.tenant.id}}
+Authorization: Bearer {{platformAuth.response.body.$.token}}
+Content-Type: application/json
+
+{ "name": "Otro Negocio", "ruc": null, "active": false }

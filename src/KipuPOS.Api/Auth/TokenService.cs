@@ -1,11 +1,12 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
-using CafePos.Api.Domain;
+using KipuPOS.Api.Domain;
+using KipuPOS.Api.Support;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 
-namespace CafePos.Api.Auth;
+namespace KipuPOS.Api.Auth;
 
 public class JwtOptions
 {
@@ -31,8 +32,10 @@ public class TokenService(IOptions<JwtOptions> options)
             new(ClaimTypes.Name, user.Username),
             new(ClaimTypes.Role, user.Role),
         };
+        if (user.TenantId is { } tenantId) claims.Add(new Claim(AppClaims.Tenant, tenantId.ToString()));
+        if (user.BranchId is { } branchId) claims.Add(new Claim(AppClaims.Branch, branchId.ToString()));
         // "mcp" = debe cambiar la contraseña: con este token solo se puede llamar a change-password
-        if (user.MustChangePassword) claims.Add(new Claim("mcp", "1"));
+        if (user.MustChangePassword) claims.Add(new Claim(AppClaims.MustChangePassword, "1"));
         var jwt = new JwtSecurityToken(_o.Issuer, _o.Audience, claims, expires: expires, signingCredentials: creds);
         return (new JwtSecurityTokenHandler().WriteToken(jwt), expires);
     }

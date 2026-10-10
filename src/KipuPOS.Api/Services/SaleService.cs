@@ -1,13 +1,12 @@
-using CafePos.Api.Data;
-using CafePos.Api.Domain;
-using CafePos.Api.Support;
-using CafePos.Shared;
+using KipuPOS.Api.Data;
+using KipuPOS.Api.Domain;
+using KipuPOS.Api.Support;
+using KipuPOS.Shared;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
 
-namespace CafePos.Api.Services;
+namespace KipuPOS.Api.Services;
 
-public class SaleService(AppDbContext db, IOptions<TaxOptions> tax)
+public class SaleService(AppDbContext db, TenantSettings settings, DocumentNumberService numbers, ILogger<SaleService> log)
 {
     private static ServiceResult<SaleDto> Fail(int s, string m) => ServiceResult<SaleDto>.Fail(s, m);
 
@@ -29,43 +28,65 @@ public class SaleService(AppDbContext db, IOptions<TaxOptions> tax)
         if (session is null || session.CashierId != cashierId) return Fail(404, "Turno no encontrado.");
         if (session.ClosedAtUtc is not null) return Fail(409, "El turno ya está cerrado.");
 
+        var cfg = await settings.GetAsync(ct);
+        var now = DateTime.UtcNow;
+        var created = req.CreatedAtUtc.ToUniversalTime();
+        if (created > now.AddMinutes(5)) created = now; // reloj del cliente adelantado
+        var businessDate = DateOnly.FromDateTime(created.AddHours(cfg.UtcOffsetHours));
+
         var ids = req.Lines.Select(l => l.ProductId).Distinct().ToList();
         var products = await db.Products.AsNoTracking().Where(p => ids.Contains(p.Id)).ToDictionaryAsync(p => p.Id, ct);
         if (ids.Any(id => !products.TryGetValue(id, out var found) || !found.Active))
             return Fail(400, "Hay productos inexistentes o inactivos.");
 
+        // Platos de menú: el precio es el del menú de la fecha de la venta
+        var menuPrices = await db.DailyMenuEntries.AsNoTracking()
+            .Where(e => e.BranchId == session.BranchId && e.Date == businessDate && ids.Contains(e.ProductId))
+            .ToDictionaryAsync(e => e.ProductId, e => e.Price, ct);
+        var missing = products.Values.FirstOrDefault(p => p.IsMenuItem && !menuPrices.ContainsKey(p.Id));
+        if (missing is not null) return Fail(400, $"«{missing.Name}» no está en el menú de ese día.");
+
         var position = 0;
         var lines = req.Lines.Select(l =>
         {
             var p = products[l.ProductId]; // el precio SIEMPRE sale del servidor
+            var unit = p.IsMenuItem ? menuPrices[p.Id] : p.Price;
             return new SaleLine
             {
-                Position = position++, ProductId = p.Id, ProductName = p.Name, UnitPrice = p.Price,
-                Quantity = l.Quantity, Note = Text.Trunc(l.Note, 200), LineSubtotal = Money.Round(p.Price * l.Quantity)
+                Position = position++, ProductId = p.Id, ProductName = p.Name, UnitPrice = unit,
+                Quantity = l.Quantity, Note = Text.Trunc(l.Note, 200), LineSubtotal = Money.Round(unit * l.Quantity)
             };
         }).ToList();
 
         var subtotal = lines.Sum(l => l.LineSubtotal);
-        var igv = Money.Round(subtotal * tax.Value.IgvRate); // IGV sobre el subtotal de la venta
-        var now = DateTime.UtcNow;
-        var created = req.CreatedAtUtc.ToUniversalTime();
-        if (created > now.AddMinutes(5)) created = now; // reloj del cliente adelantado
+        var igv = Money.Round(subtotal * cfg.IgvRate); // IGV sobre el subtotal de la venta
 
-        db.Sales.Add(new Sale
+        var sale = new Sale
         {
-            Id = req.Id, CreatedAtUtc = created, ReceivedAtUtc = now, CashSessionId = session.Id, CashierId = cashierId,
+            Id = req.Id, BranchId = session.BranchId, CreatedAtUtc = created, ReceivedAtUtc = now,
+            CashSessionId = session.Id, CashierId = cashierId,
             Subtotal = subtotal, Igv = igv, Total = subtotal + igv, PaymentMethod = req.PaymentMethod,
             Status = SaleStatus.Valid, Lines = lines
-        });
+        };
 
-        try { await db.SaveChangesAsync(ct); }
-        catch (DbUpdateException)
+        // El número y la venta se confirman juntos: si algo falla, el número vuelve a quedar libre
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        try
         {
-            // Dos reenvíos simultáneos de la misma venta
+            sale.Number = await numbers.NextAsync(session.BranchId, ct);
+            db.Sales.Add(sale);
+            await db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+        }
+        catch (DbUpdateException ex)
+        {
+            await tx.RollbackAsync(ct);
             db.ChangeTracker.Clear();
+            // Dos reenvíos simultáneos de la misma venta: gana uno y el otro devuelve la venta ya registrada
             if (await db.Sales.AsNoTracking().AnyAsync(s => s.Id == req.Id && s.CashierId == cashierId, ct))
                 return ServiceResult<SaleDto>.Success(await LoadDtoAsync(req.Id, ct));
-            throw;
+            log.LogWarning(ex, "No se pudo registrar la venta {SaleId}", req.Id);
+            return Fail(409, "No se pudo registrar la venta (identificador duplicado o conflicto). Reintenta.");
         }
         return ServiceResult<SaleDto>.Success(await LoadDtoAsync(req.Id, ct), 201);
     }
@@ -112,15 +133,22 @@ public class SaleService(AppDbContext db, IOptions<TaxOptions> tax)
         return ServiceResult<SaleDto>.Success(await LoadDtoAsync(id, ct)); // el cliente imprime con la marca COPIA
     }
 
-    public async Task<PagedResult<SaleListItemDto>> ListAsync(DateTime? from, DateTime? to, Guid? cashierId,
+    public async Task<PagedResult<SaleListItemDto>> ListAsync(DateTime? from, DateTime? to, Guid? cashierId, Guid? branchId,
         PaymentMethod? method, SaleStatus? status, int page, int pageSize, Guid userId, bool isAdmin, CancellationToken ct)
     {
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 100);
 
         var q = db.Sales.AsNoTracking().AsQueryable();
-        if (!isAdmin) q = q.Where(s => s.CashierId == userId && s.CashSession!.ClosedAtUtc == null); // el cajero ve solo su turno abierto
-        else if (cashierId is { } c) q = q.Where(s => s.CashierId == c);
+        if (!isAdmin)
+        {
+            q = q.Where(s => s.CashierId == userId && s.CashSession!.ClosedAtUtc == null); // el cajero ve solo su turno abierto
+        }
+        else
+        {
+            if (cashierId is { } c) q = q.Where(s => s.CashierId == c);
+            if (branchId is { } br) q = q.Where(s => s.BranchId == br);
+        }
         if (from is { } f) q = q.Where(s => s.CreatedAtUtc >= f);
         if (to is { } t) q = q.Where(s => s.CreatedAtUtc < t);
         if (method is { } m) q = q.Where(s => s.PaymentMethod == m);
@@ -134,7 +162,7 @@ public class SaleService(AppDbContext db, IOptions<TaxOptions> tax)
         return new PagedResult<SaleListItemDto>(items, total, page, pageSize);
     }
 
-    // Admin: cualquier venta. Cajero: solo las suyas, mientras su turno siga abierto.
+    // Admin: cualquier venta del negocio. Cajero: solo las suyas, mientras su turno siga abierto.
     private async Task<ServiceResult<SaleDto>?> CheckAccessAsync(Guid id, Guid userId, bool isAdmin, CancellationToken ct)
     {
         var info = await db.Sales.AsNoTracking().Where(s => s.Id == id)
@@ -147,7 +175,8 @@ public class SaleService(AppDbContext db, IOptions<TaxOptions> tax)
 
     private async Task<SaleDto> LoadDtoAsync(Guid id, CancellationToken ct)
     {
-        var sale = await db.Sales.AsNoTracking().Include(s => s.Lines).Include(s => s.Cashier).Include(s => s.VoidedBy)
+        var sale = await db.Sales.AsNoTracking().Include(s => s.Lines).Include(s => s.Cashier)
+            .Include(s => s.VoidedBy)
             .FirstAsync(s => s.Id == id, ct);
         var reprints = await db.SaleAudits.CountAsync(a => a.SaleId == id && a.Type == SaleAuditType.Reprint, ct);
         return sale.ToDto(reprints);

@@ -1,9 +1,9 @@
 using System.Security.Claims;
-using CafePos.Api.Services;
-using CafePos.Api.Support;
-using CafePos.Shared;
+using KipuPOS.Api.Services;
+using KipuPOS.Api.Support;
+using KipuPOS.Shared;
 
-namespace CafePos.Api.Endpoints;
+namespace KipuPOS.Api.Endpoints;
 
 public static class SaleEndpoints
 {
@@ -14,10 +14,10 @@ public static class SaleEndpoints
         g.MapPost("", async (CreateSaleRequest r, ClaimsPrincipal u, SaleService svc, CancellationToken ct) =>
             (await svc.CreateAsync(r, u.GetUserId(), ct)).ToHttp());
 
-        // Admin: historial con filtros. Cajero: solo las ventas de su turno abierto (los filtros de cajero se ignoran).
-        g.MapGet("", async (DateTimeOffset? from, DateTimeOffset? to, Guid? cashierId, PaymentMethod? method, SaleStatus? status,
+        // Admin: historial con filtros (cajero, sucursal, método, estado). Cajero: solo las ventas de su turno abierto.
+        g.MapGet("", async (DateTimeOffset? from, DateTimeOffset? to, Guid? cashierId, Guid? branchId, PaymentMethod? method, SaleStatus? status,
             ClaimsPrincipal u, SaleService svc, CancellationToken ct, int page = 1, int pageSize = 25) =>
-            Results.Ok(await svc.ListAsync(from?.UtcDateTime, to?.UtcDateTime, cashierId, method, status, page, pageSize,
+            Results.Ok(await svc.ListAsync(from?.UtcDateTime, to?.UtcDateTime, cashierId, branchId, method, status, page, pageSize,
                 u.GetUserId(), u.IsAdmin(), ct)));
 
         g.MapGet("/{id:guid}", async (Guid id, ClaimsPrincipal u, SaleService svc, CancellationToken ct) =>

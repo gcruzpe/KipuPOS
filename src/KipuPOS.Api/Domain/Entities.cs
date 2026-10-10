@@ -1,11 +1,47 @@
 using System.ComponentModel.DataAnnotations;
-using CafePos.Shared;
+using KipuPOS.Shared;
 
-namespace CafePos.Api.Domain;
+namespace KipuPOS.Api.Domain;
 
-public class User
+// Toda entidad que pertenece a un negocio lleva TenantId.
+// AppDbContext lo asigna al guardar y lo filtra automáticamente en cada consulta.
+public interface ITenantEntity { Guid TenantId { get; set; } }
+
+public class Tenant
 {
     public Guid Id { get; set; } = Guid.NewGuid();
+    public string Code { get; set; } = "";   // código de acceso (único); se escribe en el login
+    public string Name { get; set; } = "";
+    public string? Ruc { get; set; }
+    public bool Active { get; set; } = true;
+    public decimal IgvRate { get; set; } = 0.18m;
+    public int UtcOffsetHours { get; set; } = -5; // Lima, sin horario de verano
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+}
+
+public class Branch : ITenantEntity
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public string Name { get; set; } = "";
+    public string? Address { get; set; }
+    public bool Active { get; set; } = true;
+}
+
+// Contador de documentos por negocio, sucursal y tipo (numeración correlativa sin huecos)
+public class DocumentCounter : ITenantEntity
+{
+    public Guid TenantId { get; set; }
+    public Guid BranchId { get; set; }
+    public string Type { get; set; } = "";
+    public long LastNumber { get; set; }
+}
+
+public class User // no implementa ITenantEntity: los usuarios de plataforma (rol Platform) no tienen negocio
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid? TenantId { get; set; } // null solo para el rol Platform
+    public Guid? BranchId { get; set; } // obligatorio para cajeros; opcional para administradores
     public string Username { get; set; } = "";
     public string FullName { get; set; } = "";
     public string PasswordHash { get; set; } = "";
@@ -18,28 +54,47 @@ public class User
     public DateTime? LockoutUntilUtc { get; set; }
 }
 
-public class Category
+public class Category : ITenantEntity
 {
     public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
     public string Name { get; set; } = "";
     public int SortOrder { get; set; }
     public bool Active { get; set; } = true;
     public List<Product> Products { get; set; } = [];
 }
 
-public class Product
+public class Product : ITenantEntity
 {
     public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
     public Guid CategoryId { get; set; }
     public Category? Category { get; set; }
     public string Name { get; set; } = "";
-    public decimal Price { get; set; } // sin IGV
+    public decimal Price { get; set; } // sin IGV (en platos de menú es el precio habitual; el del día va en DailyMenuEntry)
     public bool Active { get; set; } = true;
+    public bool IsMenuItem { get; set; } // plato de menú: se vende solo si está en el menú del día
 }
 
-public class CashSession
+public class DailyMenuEntry : ITenantEntity
 {
     public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid BranchId { get; set; } // el menú es por sucursal
+    public DateOnly Date { get; set; } // fecha de negocio (hora local del negocio)
+    public Guid ProductId { get; set; }
+    public Product? Product { get; set; }
+    public decimal Price { get; set; } // sin IGV, precio de ese día
+    public bool SoldOut { get; set; }  // aviso para la caja; no bloquea ventas en el servidor
+    public int SortOrder { get; set; }
+}
+
+public class CashSession : ITenantEntity
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid BranchId { get; set; }
+    public Branch? Branch { get; set; }
     public Guid CashierId { get; set; }
     public User? Cashier { get; set; }
     public DateTime OpenedAtUtc { get; set; }
@@ -52,10 +107,13 @@ public class CashSession
     [Timestamp] public byte[] RowVersion { get; set; } = [];
 }
 
-public class Sale
+public class Sale : ITenantEntity
 {
     public Guid Id { get; set; } // generado por el cliente
-    public long Number { get; set; } // secuencia de SQL Server
+    public Guid TenantId { get; set; }
+    public Guid BranchId { get; set; }
+    public Branch? Branch { get; set; }
+    public long Number { get; set; } // correlativo por sucursal (DocumentCounter)
     public DateTime CreatedAtUtc { get; set; }  // cuando se vendió (reloj del cliente)
     public DateTime ReceivedAtUtc { get; set; } // cuando llegó al servidor (útil en modo offline)
     public Guid CashSessionId { get; set; }
@@ -75,9 +133,10 @@ public class Sale
     [Timestamp] public byte[] RowVersion { get; set; } = [];
 }
 
-public class SaleLine
+public class SaleLine : ITenantEntity
 {
     public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
     public Guid SaleId { get; set; }
     public int Position { get; set; }
     public Guid ProductId { get; set; }
@@ -90,9 +149,10 @@ public class SaleLine
 
 public enum SaleAuditType { Reprint = 1, Void = 2 }
 
-public class SaleAudit
+public class SaleAudit : ITenantEntity
 {
     public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
     public Guid SaleId { get; set; }
     public SaleAuditType Type { get; set; }
     public Guid UserId { get; set; }

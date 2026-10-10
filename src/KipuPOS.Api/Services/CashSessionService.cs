@@ -1,20 +1,30 @@
-using CafePos.Api.Data;
-using CafePos.Api.Domain;
-using CafePos.Api.Support;
-using CafePos.Shared;
+using KipuPOS.Api.Data;
+using KipuPOS.Api.Domain;
+using KipuPOS.Api.Support;
+using KipuPOS.Shared;
 using Microsoft.EntityFrameworkCore;
 
-namespace CafePos.Api.Services;
+namespace KipuPOS.Api.Services;
 
 public class CashSessionService(AppDbContext db)
 {
     public async Task<ServiceResult<CashSessionDto>> OpenAsync(decimal openingCash, Guid userId, CancellationToken ct)
     {
         if (openingCash < 0 || openingCash > 100_000) return ServiceResult<CashSessionDto>.Fail(400, "Fondo inicial inválido.");
+
+        // La sucursal del turno es la del usuario (se lee de la base, no del token, por si cambió)
+        var branchId = await db.Users.AsNoTracking().Where(u => u.Id == userId).Select(u => u.BranchId).FirstOrDefaultAsync(ct);
+        if (branchId is null) return ServiceResult<CashSessionDto>.Fail(400, "Tu usuario no tiene sucursal asignada.");
+        if (!await db.Branches.AnyAsync(b => b.Id == branchId && b.Active, ct))
+            return ServiceResult<CashSessionDto>.Fail(400, "Tu sucursal está inactiva.");
+
         if (await db.CashSessions.AnyAsync(s => s.CashierId == userId && s.ClosedAtUtc == null, ct))
             return ServiceResult<CashSessionDto>.Fail(409, "Ya tienes un turno abierto.");
 
-        var session = new CashSession { CashierId = userId, OpenedAtUtc = DateTime.UtcNow, OpeningCash = Money.Round(openingCash) };
+        var session = new CashSession
+        {
+            CashierId = userId, BranchId = branchId.Value, OpenedAtUtc = DateTime.UtcNow, OpeningCash = Money.Round(openingCash)
+        };
         db.CashSessions.Add(session);
         try { await db.SaveChangesAsync(ct); }
         catch (DbUpdateException) { return ServiceResult<CashSessionDto>.Fail(409, "Ya tienes un turno abierto."); }
@@ -59,23 +69,24 @@ public class CashSessionService(AppDbContext db)
         return ServiceResult<SessionSummaryDto>.Success(await BuildSummaryAsync(id, ct));
     }
 
-    public async Task<PagedResult<CashSessionDto>> ListAsync(DateTime? from, DateTime? to, int page, int pageSize, CancellationToken ct)
+    public async Task<PagedResult<CashSessionDto>> ListAsync(DateTime? from, DateTime? to, Guid? branchId, int page, int pageSize, CancellationToken ct)
     {
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 100);
         var q = db.CashSessions.AsNoTracking().AsQueryable();
+        if (branchId is { } b) q = q.Where(s => s.BranchId == b);
         if (from is { } f) q = q.Where(s => s.OpenedAtUtc >= f);
         if (to is { } t) q = q.Where(s => s.OpenedAtUtc < t);
         var total = await q.CountAsync(ct);
         var items = await q.OrderByDescending(s => s.OpenedAtUtc).Skip((page - 1) * pageSize).Take(pageSize)
-            .Select(s => new CashSessionDto(s.Id, s.CashierId, s.Cashier!.FullName, s.OpenedAtUtc, s.ClosedAtUtc,
+            .Select(s => new CashSessionDto(s.Id, s.BranchId, s.CashierId, s.Cashier!.FullName, s.OpenedAtUtc, s.ClosedAtUtc,
                 s.OpeningCash, s.CountedCash, s.ExpectedCash, s.Difference)).ToListAsync(ct);
         return new PagedResult<CashSessionDto>(items, total, page, pageSize);
     }
 
     private Task<CashSessionDto?> LoadAsync(Guid id, CancellationToken ct) =>
         db.CashSessions.AsNoTracking().Where(s => s.Id == id)
-            .Select(s => new CashSessionDto(s.Id, s.CashierId, s.Cashier!.FullName, s.OpenedAtUtc, s.ClosedAtUtc,
+            .Select(s => new CashSessionDto(s.Id, s.BranchId, s.CashierId, s.Cashier!.FullName, s.OpenedAtUtc, s.ClosedAtUtc,
                 s.OpeningCash, s.CountedCash, s.ExpectedCash, s.Difference))
             .FirstOrDefaultAsync(ct);
 
