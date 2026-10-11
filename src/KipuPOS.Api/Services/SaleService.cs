@@ -10,7 +10,10 @@ public class SaleService(AppDbContext db, TenantSettings settings, DocumentNumbe
 {
     private static ServiceResult<SaleDto> Fail(int s, string m) => ServiceResult<SaleDto>.Fail(s, m);
 
-    public async Task<ServiceResult<SaleDto>> CreateAsync(CreateSaleRequest req, Guid cashierId, CancellationToken ct)
+    // tableOrderId: venta que sale de una cuenta de mesa. Los cambios que TableOrderService dejó pendientes en este mismo
+    // DbContext (descontar lo cobrado de la cuenta) se guardan en la MISMA transacción que la venta.
+    public async Task<ServiceResult<SaleDto>> CreateAsync(CreateSaleRequest req, Guid cashierId, CancellationToken ct,
+        Guid? tableOrderId = null, string? tableName = null)
     {
         if (req.Id == Guid.Empty) return Fail(400, "Falta el identificador de la venta.");
 
@@ -60,13 +63,31 @@ public class SaleService(AppDbContext db, TenantSettings settings, DocumentNumbe
 
         var subtotal = lines.Sum(l => l.LineSubtotal);
         var igv = Money.Round(subtotal * cfg.IgvRate); // IGV sobre el subtotal de la venta
+        var total = subtotal + igv;
+
+        // Pagos: uno solo por defecto; en pago mixto deben sumar exactamente el total calculado por el servidor
+        List<SalePayment> payments;
+        if (req.Payments is { Count: > 0 } parts)
+        {
+            if (parts.Count > 4) return Fail(400, "Máximo 4 formas de pago por venta.");
+            if (parts.Any(p => p.Amount <= 0 || !Enum.IsDefined(p.Method))) return Fail(400, "Hay un pago inválido.");
+            payments = parts.GroupBy(p => p.Method)
+                .Select(g => new SalePayment { Method = g.Key, Amount = Money.Round(g.Sum(p => p.Amount)) }).ToList();
+            var paid = payments.Sum(p => p.Amount);
+            if (paid != total) return Fail(400, $"Los pagos suman S/ {paid:0.00} y el total es S/ {total:0.00}.");
+        }
+        else
+        {
+            payments = [new SalePayment { Method = req.PaymentMethod, Amount = total }];
+        }
 
         var sale = new Sale
         {
             Id = req.Id, BranchId = session.BranchId, CreatedAtUtc = created, ReceivedAtUtc = now,
             CashSessionId = session.Id, CashierId = cashierId,
-            Subtotal = subtotal, Igv = igv, Total = subtotal + igv, PaymentMethod = req.PaymentMethod,
-            Status = SaleStatus.Valid, Lines = lines
+            Subtotal = subtotal, Igv = igv, Total = total,
+            PaymentMethod = payments.OrderByDescending(p => p.Amount).First().Method, // pago principal
+            Status = SaleStatus.Valid, Lines = lines, Payments = payments, TableOrderId = tableOrderId, TableName = tableName
         };
 
         // El número y la venta se confirman juntos: si algo falla, el número vuelve a quedar libre
@@ -157,7 +178,8 @@ public class SaleService(AppDbContext db, TenantSettings settings, DocumentNumbe
         var total = await q.CountAsync(ct);
         var items = await q.OrderByDescending(s => s.CreatedAtUtc).ThenByDescending(s => s.Number)
             .Skip((page - 1) * pageSize).Take(pageSize)
-            .Select(s => new SaleListItemDto(s.Id, s.Number, s.CreatedAtUtc, s.Cashier!.FullName, s.PaymentMethod, s.Status, s.Total))
+            .Select(s => new SaleListItemDto(s.Id, s.Number, s.CreatedAtUtc, s.Cashier!.FullName, s.PaymentMethod, s.Status, s.Total,
+                s.Payments.Count > 1, s.TableName))
             .ToListAsync(ct);
         return new PagedResult<SaleListItemDto>(items, total, page, pageSize);
     }
@@ -173,9 +195,9 @@ public class SaleService(AppDbContext db, TenantSettings settings, DocumentNumbe
         return null;
     }
 
-    private async Task<SaleDto> LoadDtoAsync(Guid id, CancellationToken ct)
+    public async Task<SaleDto> LoadDtoAsync(Guid id, CancellationToken ct)
     {
-        var sale = await db.Sales.AsNoTracking().Include(s => s.Lines).Include(s => s.Cashier)
+        var sale = await db.Sales.AsNoTracking().Include(s => s.Lines).Include(s => s.Payments).Include(s => s.Cashier)
             .Include(s => s.VoidedBy)
             .FirstAsync(s => s.Id == id, ct);
         var reprints = await db.SaleAudits.CountAsync(a => a.SaleId == id && a.Type == SaleAuditType.Reprint, ct);

@@ -1,0 +1,269 @@
+@page "/ventas"
+@inherits SecurePage
+@inject PosContext Ctx
+@inject PrinterSettings Printer
+
+<PageTitle>Ventas · KipuPOS</PageTitle>
+
+@if (!Allowed) { return; }
+
+<div class="screen">
+    <PosHeader Brand="@Ctx.Branding" Where="@Ctx.BranchName(User.BranchId)">
+        @if (Auth.IsAdmin)
+        {
+            <a class="btn btn-on-dark" href="/admin/menu">Administración</a>
+        }
+        <a class="btn btn-on-dark" href="/caja">← Volver a la caja</a>
+    </PosHeader>
+
+    <div class="wrap">
+        <div class="wrap-inner">
+            <div style="display: flex; flex-direction: column; gap: 6px">
+                <h1 style="font-size: 44px; font-weight: 800; letter-spacing: -0.04em; line-height: 1">@(Auth.IsAdmin ? "Ventas de hoy" : "Ventas del turno")</h1>
+                <p class="muted" style="margin: 0">@(Auth.IsAdmin ? "Todas las sucursales." : "Solo las ventas de tu turno abierto.") Toca una venta para ver el detalle, reimprimir o anular.</p>
+            </div>
+
+            @if (loadError is not null)
+            {
+                <div class="alert" role="alert">@loadError</div>
+            }
+
+            <div class="cols">
+                <section class="col-main">
+                    <div class="panel table-wrap">
+                        <table class="k-table" style="min-width: 520px">
+                            <thead>
+                                <tr>
+                                    <th scope="col">Ticket</th><th scope="col">Hora</th>
+                                    @if (Auth.IsAdmin) { <th scope="col">Cajero</th> }
+                                    <th scope="col">Mesa</th><th scope="col">Pago</th><th scope="col" class="num">Total</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @if (loading)
+                                {
+                                    <tr class="empty-row"><td colspan="6">Cargando…</td></tr>
+                                }
+                                else if (sales.Count == 0)
+                                {
+                                    <tr class="empty-row"><td colspan="6">Todavía no hay ventas.</td></tr>
+                                }
+                                @foreach (var s in sales)
+                                {
+                                    <tr class="clickable @(selected?.Id == s.Id ? "selected" : "") @(s.Status == SaleStatus.Voided ? "voided" : "")" @onclick="() => SelectAsync(s.Id)">
+                                        <td class="mono">@Fmt.Ticket(s.Number)</td>
+                                        <td>@Fmt.Time(Ctx.ToLocal(s.CreatedAtUtc))</td>
+                                        @if (Auth.IsAdmin) { <td>@s.CashierName</td> }
+                                        <td>@(s.TableName ?? "—")</td>
+                                        <td>@(s.MixedPayment ? "Mixto" : Fmt.Method(s.PaymentMethod))</td>
+                                        <td class="num">@Fmt.Money(s.Total) @if (s.Status == SaleStatus.Voided) { <span class="tag tag-bad" style="text-decoration: none">anulada</span> }</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    @if (totalCount > sales.Count)
+                    {
+                        <p class="muted" style="margin: 0; font-size: 14px">Mostrando las últimas @sales.Count de @totalCount ventas.</p>
+                    }
+                </section>
+
+                <aside class="col-side" style="display: flex; flex-direction: column; gap: 16px">
+                    @if (selected is { } d)
+                    {
+                        <div class="panel">
+                            <div class="panel-head">
+                                <h2>Ticket @Fmt.Ticket(d.Number)</h2>
+                                @if (d.Status == SaleStatus.Voided)
+                                {
+                                    <span class="tag tag-bad">anulada</span>
+                                }
+                            </div>
+                            <div class="tejido-2" aria-hidden="true"></div>
+                            <div class="lines" style="min-height: 0">
+                                @foreach (var l in d.Lines)
+                                {
+                                    <div class="line">
+                                        <div class="info"><strong>@l.Quantity × @l.ProductName</strong><span>@Fmt.Money(l.UnitPrice) c/u</span></div>
+                                        <span class="sub">@Fmt.Money(l.LineSubtotal)</span>
+                                    </div>
+                                }
+                            </div>
+                            <div class="panel-body">
+                                <dl class="totals">
+                                    <dt>Subtotal</dt><dd>@Fmt.Money(d.Subtotal)</dd>
+                                    <dt>IGV</dt><dd>@Fmt.Money(d.Igv)</dd>
+                                    @foreach (var p in d.Payments)
+                                    {
+                                        <dt>Pago @Fmt.Method(p.Method)</dt><dd>@Fmt.Money(p.Amount)</dd>
+                                    }
+                                    @if (d.TableName is not null) { <dt>Mesa</dt><dd>@d.TableName</dd> }
+                                    <dt>Cajero</dt><dd>@d.CashierName</dd>
+                                    <dt>Fecha</dt><dd>@Fmt.Stamp(Ctx.ToLocal(d.CreatedAtUtc))</dd>
+                                    @if (d.ReprintCount > 0) { <dt>Reimpresiones</dt><dd>@d.ReprintCount</dd> }
+                                </dl>
+                                <div class="grand"><span>Total</span><span>@Fmt.Money(d.Total)</span></div>
+                                @if (d.Status == SaleStatus.Voided)
+                                {
+                                    <div class="alert soft">Anulada por @d.VoidedByName@(d.VoidedAtUtc is { } va ? $" el {Fmt.Stamp(Ctx.ToLocal(va))}" : ""): «@d.VoidReason»</div>
+                                }
+                                @if (actionError is not null)
+                                {
+                                    <div class="alert" role="alert">@actionError</div>
+                                }
+                                @if (toast is not null)
+                                {
+                                    <p class="toast" role="status">@toast</p>
+                                }
+                                @if (d.Status == SaleStatus.Valid)
+                                {
+                                    <button type="button" class="btn btn-dark btn-block" disabled="@busy" @onclick="ReprintAsync">Reimprimir ticket</button>
+                                    @if (voiding)
+                                    {
+                                        <div class="field">
+                                            <label for="reason">Motivo de la anulación</label>
+                                            <textarea id="reason" class="input" rows="2" maxlength="200" placeholder="Ej. el cliente cambió su pedido" @bind="voidReason" @bind:event="oninput"></textarea>
+                                        </div>
+                                        <div class="seg">
+                                            <button type="button" class="btn btn-primary" disabled="@(busy || (voidReason?.Trim().Length ?? 0) < 3)" @onclick="VoidAsync">Anular venta</button>
+                                            <button type="button" class="btn btn-outline" @onclick="() => voiding = false">Cancelar</button>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <button type="button" class="btn btn-outline btn-block" @onclick="() => { voiding = true; voidReason = null; }">Anular venta…</button>
+                                    }
+                                }
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="alert soft">Elige una venta de la lista.</div>
+                    }
+
+                    <div class="panel">
+                        <div class="panel-head"><h2 style="font-size: 18px">Impresora de este equipo</h2></div>
+                        <div class="panel-body" style="padding-top: 0">
+                            <div class="seg" role="group" aria-label="Ancho del ticket">
+                                <button type="button" class="pill pay" aria-pressed="@(Printer.WidthMm == 58 ? "true" : "false")" @onclick="() => Printer.SetWidthAsync(58)">58 mm</button>
+                                <button type="button" class="pill pay" aria-pressed="@(Printer.WidthMm == 80 ? "true" : "false")" @onclick="() => Printer.SetWidthAsync(80)">80 mm</button>
+                            </div>
+                            <label class="check"><input type="checkbox" checked="@Printer.AutoPrint" @onchange="e => Printer.SetAutoPrintAsync(e.Value is true)" /> Imprimir automáticamente al cobrar</label>
+                            <span class="muted" style="font-size: 13px">Se guarda solo en este equipo. Al imprimir, elige la impresora de tickets y desactiva encabezados y márgenes del navegador.</span>
+                        </div>
+                    </div>
+                </aside>
+            </div>
+        </div>
+    </div>
+</div>
+
+<TicketPrint Sale="printSale" BranchId="@(printSale is null ? null : PrintBranch)" Copy="printCopy" WidthMm="Printer.WidthMm" />
+
+@code {
+    private bool loading = true, busy, voiding, printCopy;
+    private string? loadError, actionError, toast, voidReason;
+    private List<SaleListItemDto> sales = [];
+    private int totalCount;
+    private SaleDto? selected, printSale;
+
+    // La sucursal del ticket es la del turno; el cajero vende en la suya
+    private Guid? PrintBranch => User.BranchId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Allowed) return;
+        try
+        {
+            await Ctx.EnsureLoadedAsync();
+            await Printer.EnsureLoadedAsync();
+            await LoadAsync();
+        }
+        catch (ApiException ex)
+        {
+            loadError = ex.Message;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        var url = "api/sales?pageSize=100";
+        if (Auth.IsAdmin)
+        {
+            // Desde la medianoche de hoy en la hora del negocio
+            var offset = TimeSpan.FromHours(Ctx.Tenant?.UtcOffsetHours ?? -5);
+            var from = new DateTimeOffset(Ctx.Today.ToDateTime(TimeOnly.MinValue), offset);
+            url += "&from=" + Uri.EscapeDataString(from.ToString("o"));
+        }
+        var page = await Api.GetAsync<PagedResult<SaleListItemDto>>(url);
+        sales = page?.Items.ToList() ?? [];
+        totalCount = page?.Total ?? 0;
+    }
+
+    private async Task SelectAsync(Guid id)
+    {
+        actionError = toast = null;
+        voiding = false;
+        try
+        {
+            selected = await Api.GetAsync<SaleDto>($"api/sales/{id}");
+        }
+        catch (ApiException ex)
+        {
+            actionError = ex.Message;
+        }
+    }
+
+    private async Task ReprintAsync()
+    {
+        if (selected is null) return;
+        actionError = toast = null;
+        busy = true;
+        try
+        {
+            // La API registra la reimpresión (auditoría) y devuelve la venta: se imprime con la marca COPIA
+            var sale = await Api.PostAsync<SaleDto>($"api/sales/{selected.Id}/reprint", null);
+            if (sale is null) return;
+            selected = sale;
+            printSale = sale;
+            printCopy = true;
+            StateHasChanged();
+            await Printer.PrintAsync();
+        }
+        catch (ApiException ex)
+        {
+            actionError = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task VoidAsync()
+    {
+        if (selected is null || (voidReason?.Trim().Length ?? 0) < 3) return;
+        actionError = toast = null;
+        busy = true;
+        try
+        {
+            selected = await Api.PostAsync<SaleDto>($"api/sales/{selected.Id}/void", new VoidSaleRequest(voidReason!.Trim()));
+            voiding = false;
+            toast = "Venta anulada. No suma al cierre del turno.";
+            await LoadAsync();
+        }
+        catch (ApiException ex)
+        {
+            actionError = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+}

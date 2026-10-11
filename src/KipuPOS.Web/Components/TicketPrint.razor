@@ -1,0 +1,76 @@
+@inject PosContext Ctx
+@inject ApiClient Api
+
+@* Ticket para impresora térmica. En pantalla no se ve: solo aparece al imprimir (ver "Impresión" en app.css). *@
+@if (Sale is { } s)
+{
+    var b = Ctx.Branding;
+    var branch = Ctx.Branches.FirstOrDefault(x => x.Id == BranchId);
+    <style>@@page { size: @(WidthMm)mm auto; margin: 0; }</style>
+    <div class="print-area ticket @(WidthMm == 58 ? "w58" : "w80")">
+        @if (b?.LogoVersion is { } v)
+        {
+            <img class="ticket-logo" src="@Api.LogoUrl(b.Code, LogoKinds.Light, v)" alt="" />
+        }
+        <div class="t-center t-strong">@(Ctx.Tenant?.Name)</div>
+        @if (!string.IsNullOrEmpty(Ctx.Tenant?.Ruc))
+        {
+            <div class="t-center">RUC @Ctx.Tenant.Ruc</div>
+        }
+        @if (branch is not null)
+        {
+            <div class="t-center">@branch.Name@(string.IsNullOrEmpty(branch.Address) ? "" : $" · {branch.Address}")</div>
+        }
+        @if (Copy)
+        {
+            <div class="t-center t-strong t-copy">*** COPIA ***</div>
+        }
+        @if (s.Status == SaleStatus.Voided)
+        {
+            <div class="t-center t-strong t-copy">*** ANULADA ***</div>
+        }
+        <div class="t-rule"></div>
+        <div class="t-row"><span>Ticket</span><span>@Fmt.Ticket(s.Number)</span></div>
+        <div class="t-row"><span>Fecha</span><span>@Fmt.Stamp(Ctx.ToLocal(s.CreatedAtUtc))</span></div>
+        <div class="t-row"><span>Cajero</span><span>@s.CashierName</span></div>
+        @if (!string.IsNullOrEmpty(s.TableName))
+        {
+            <div class="t-row"><span>Mesa</span><span>@s.TableName</span></div>
+        }
+        <div class="t-rule"></div>
+        @foreach (var l in s.Lines)
+        {
+            <div class="t-item">@l.Quantity × @l.ProductName</div>
+            <div class="t-row t-sub"><span>@Fmt.Money(l.UnitPrice) c/u</span><span>@Fmt.Money(l.LineSubtotal)</span></div>
+            @if (!string.IsNullOrEmpty(l.Note))
+            {
+                <div class="t-sub">  @l.Note</div>
+            }
+        }
+        <div class="t-rule"></div>
+        <div class="t-row"><span>Subtotal</span><span>@Fmt.Money(s.Subtotal)</span></div>
+        <div class="t-row"><span>IGV</span><span>@Fmt.Money(s.Igv)</span></div>
+        <div class="t-row t-total"><span>TOTAL</span><span>@Fmt.Money(s.Total)</span></div>
+        @if (s.Payments.Count > 1)
+        {
+            @foreach (var p in s.Payments)
+            {
+                <div class="t-row"><span>Pago @Fmt.Method(p.Method)</span><span>@Fmt.Money(p.Amount)</span></div>
+            }
+        }
+        else
+        {
+            <div class="t-row"><span>Pago</span><span>@Fmt.Method(s.PaymentMethod)</span></div>
+        }
+        <div class="t-rule"></div>
+        <div class="t-center t-sub">Comprobante interno, no válido como comprobante de pago.</div>
+        <div class="t-center">¡Gracias por su visita!</div>
+    </div>
+}
+
+@code {
+    [Parameter] public SaleDto? Sale { get; set; }
+    [Parameter] public Guid? BranchId { get; set; }
+    [Parameter] public bool Copy { get; set; }
+    [Parameter] public int WidthMm { get; set; } = 80;
+}

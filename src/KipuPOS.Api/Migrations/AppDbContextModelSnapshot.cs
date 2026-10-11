@@ -177,6 +177,39 @@ namespace KipuPOS.Api.Migrations
                     b.ToTable("DailyMenuEntries");
                 });
 
+            modelBuilder.Entity("KipuPOS.Api.Domain.DiningTable", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("Active")
+                        .HasColumnType("bit");
+
+                    b.Property<Guid>("BranchId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId");
+
+                    b.HasIndex("BranchId", "Name")
+                        .IsUnique();
+
+                    b.ToTable("DiningTables");
+                });
+
             modelBuilder.Entity("KipuPOS.Api.Domain.DocumentCounter", b =>
                 {
                     b.Property<Guid>("TenantId")
@@ -282,6 +315,13 @@ namespace KipuPOS.Api.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
+                    b.Property<string>("TableName")
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
+
+                    b.Property<Guid?>("TableOrderId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uniqueidentifier");
 
@@ -306,6 +346,8 @@ namespace KipuPOS.Api.Migrations
                     b.HasIndex("CashSessionId");
 
                     b.HasIndex("CashierId");
+
+                    b.HasIndex("TableOrderId");
 
                     b.HasIndex("VoidedById");
 
@@ -404,6 +446,122 @@ namespace KipuPOS.Api.Migrations
                     b.HasIndex("TenantId");
 
                     b.ToTable("SaleLines");
+                });
+
+            modelBuilder.Entity("KipuPOS.Api.Domain.SalePayment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<string>("Method")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<Guid>("SaleId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId");
+
+                    b.HasIndex("SaleId", "Method");
+
+                    b.ToTable("SalePayments");
+                });
+
+            modelBuilder.Entity("KipuPOS.Api.Domain.TableOrder", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("BranchId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("ClosedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("OpenedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("OpenedById")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<Guid>("TableId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OpenedById");
+
+                    b.HasIndex("TableId")
+                        .IsUnique()
+                        .HasFilter("[Status] = 'Open'");
+
+                    b.HasIndex("TenantId");
+
+                    b.HasIndex("BranchId", "Status");
+
+                    b.ToTable("TableOrders");
+                });
+
+            modelBuilder.Entity("KipuPOS.Api.Domain.TableOrderLine", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<Guid>("OrderId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("ProductId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Quantity")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrderId");
+
+                    b.HasIndex("ProductId");
+
+                    b.HasIndex("TenantId");
+
+                    b.ToTable("TableOrderLines");
                 });
 
             modelBuilder.Entity("KipuPOS.Api.Domain.Tenant", b =>
@@ -603,6 +761,21 @@ namespace KipuPOS.Api.Migrations
                     b.Navigation("Product");
                 });
 
+            modelBuilder.Entity("KipuPOS.Api.Domain.DiningTable", b =>
+                {
+                    b.HasOne("KipuPOS.Api.Domain.Branch", null)
+                        .WithMany()
+                        .HasForeignKey("BranchId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("KipuPOS.Api.Domain.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("KipuPOS.Api.Domain.DocumentCounter", b =>
                 {
                     b.HasOne("KipuPOS.Api.Domain.Branch", null)
@@ -655,6 +828,11 @@ namespace KipuPOS.Api.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
+                    b.HasOne("KipuPOS.Api.Domain.TableOrder", "TableOrder")
+                        .WithMany()
+                        .HasForeignKey("TableOrderId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("KipuPOS.Api.Domain.Tenant", null)
                         .WithMany()
                         .HasForeignKey("TenantId")
@@ -671,6 +849,8 @@ namespace KipuPOS.Api.Migrations
                     b.Navigation("CashSession");
 
                     b.Navigation("Cashier");
+
+                    b.Navigation("TableOrder");
 
                     b.Navigation("VoidedBy");
                 });
@@ -719,6 +899,75 @@ namespace KipuPOS.Api.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("KipuPOS.Api.Domain.SalePayment", b =>
+                {
+                    b.HasOne("KipuPOS.Api.Domain.Sale", null)
+                        .WithMany("Payments")
+                        .HasForeignKey("SaleId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("KipuPOS.Api.Domain.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("KipuPOS.Api.Domain.TableOrder", b =>
+                {
+                    b.HasOne("KipuPOS.Api.Domain.Branch", null)
+                        .WithMany()
+                        .HasForeignKey("BranchId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("KipuPOS.Api.Domain.User", "OpenedBy")
+                        .WithMany()
+                        .HasForeignKey("OpenedById")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("KipuPOS.Api.Domain.DiningTable", "Table")
+                        .WithMany()
+                        .HasForeignKey("TableId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("KipuPOS.Api.Domain.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("OpenedBy");
+
+                    b.Navigation("Table");
+                });
+
+            modelBuilder.Entity("KipuPOS.Api.Domain.TableOrderLine", b =>
+                {
+                    b.HasOne("KipuPOS.Api.Domain.TableOrder", null)
+                        .WithMany("Lines")
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("KipuPOS.Api.Domain.Product", "Product")
+                        .WithMany()
+                        .HasForeignKey("ProductId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("KipuPOS.Api.Domain.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Product");
+                });
+
             modelBuilder.Entity("KipuPOS.Api.Domain.TenantAsset", b =>
                 {
                     b.HasOne("KipuPOS.Api.Domain.Tenant", null)
@@ -747,6 +996,13 @@ namespace KipuPOS.Api.Migrations
                 });
 
             modelBuilder.Entity("KipuPOS.Api.Domain.Sale", b =>
+                {
+                    b.Navigation("Lines");
+
+                    b.Navigation("Payments");
+                });
+
+            modelBuilder.Entity("KipuPOS.Api.Domain.TableOrder", b =>
                 {
                     b.Navigation("Lines");
                 });

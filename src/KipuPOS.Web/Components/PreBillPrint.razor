@@ -1,0 +1,37 @@
+@inject PosContext Ctx
+@inject ApiClient Api
+
+@* Pre-cuenta de una mesa para que el cliente revise antes de pagar. No es venta ni comprobante. *@
+@if (Order is { } o)
+{
+    var b = Ctx.Branding;
+    var subtotal = o.Lines.Sum(l => l.LineSubtotal);
+    var igv = Fmt.Round(subtotal * Ctx.IgvRate);
+    <style>@@page { size: @(WidthMm)mm auto; margin: 0; }</style>
+    <div class="print-area ticket @(WidthMm == 58 ? "w58" : "w80")">
+        @if (b?.LogoVersion is { } v)
+        {
+            <img class="ticket-logo" src="@Api.LogoUrl(b.Code, LogoKinds.Light, v)" alt="" />
+        }
+        <div class="t-center t-strong">@(Ctx.Tenant?.Name)</div>
+        <div class="t-center t-strong t-copy">PRE-CUENTA · @o.TableName</div>
+        <div class="t-center">@Fmt.Stamp(Ctx.ToLocal(DateTime.UtcNow))</div>
+        <div class="t-rule"></div>
+        @foreach (var l in o.Lines)
+        {
+            <div class="t-item">@l.Quantity × @l.ProductName</div>
+            <div class="t-row t-sub"><span>@(l.Note is null ? "" : $"{l.Note} · ")@Fmt.Money(l.UnitPrice) c/u</span><span>@Fmt.Money(l.LineSubtotal)</span></div>
+        }
+        <div class="t-rule"></div>
+        <div class="t-row"><span>Subtotal</span><span>@Fmt.Money(subtotal)</span></div>
+        <div class="t-row"><span>IGV</span><span>@Fmt.Money(igv)</span></div>
+        <div class="t-row t-total"><span>TOTAL</span><span>@Fmt.Money(subtotal + igv)</span></div>
+        <div class="t-rule"></div>
+        <div class="t-center t-sub">Documento de control. No es comprobante de pago.</div>
+    </div>
+}
+
+@code {
+    [Parameter] public TableOrderDto? Order { get; set; }
+    [Parameter] public int WidthMm { get; set; } = 80;
+}

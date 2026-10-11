@@ -1,0 +1,154 @@
+@page "/admin/sucursales"
+@inherits SecurePage
+@inject PosContext Ctx
+
+<PageTitle>Sucursales · KipuPOS</PageTitle>
+
+@if (!Allowed) { return; }
+
+<AdminShell Brand="@Ctx.Branding">
+    <div style="display: flex; flex-direction: column; gap: 6px">
+        <h1>Sucursales</h1>
+        <p class="muted" style="margin: 0">Cada sucursal tiene su propio menú del día, sus cajeros y su numeración de tickets.</p>
+    </div>
+
+    @if (loadError is not null)
+    {
+        <div class="alert" role="alert">@loadError</div>
+    }
+    else if (loading)
+    {
+        <p class="muted">Cargando sucursales…</p>
+    }
+    else
+    {
+        <div class="cols">
+            <section class="col-main">
+                <div class="toolbar"><button type="button" class="btn btn-dark" @onclick="New">+ Nueva sucursal</button></div>
+                <div class="panel table-wrap">
+                    <table class="k-table" style="min-width: 480px">
+                        <thead><tr><th scope="col">Sucursal</th><th scope="col">Dirección</th><th scope="col">Estado</th></tr></thead>
+                        <tbody>
+                            @foreach (var b in branches)
+                            {
+                                <tr class="clickable @(form.Id == b.Id ? "selected" : "")" @onclick="() => Edit(b)">
+                                    <td style="font-weight: 800">@b.Name</td>
+                                    <td class="muted">@(b.Address ?? "—")</td>
+                                    <td><span class="tag @(b.Active ? "tag-ok" : "tag-sold")">@(b.Active ? "activa" : "inactiva")</span></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <aside class="col-side">
+                @if (editing)
+                {
+                    <form class="panel" @onsubmit="SaveAsync" @onsubmit:preventDefault>
+                        <div class="panel-head"><h2>@(form.Id is null ? "Nueva sucursal" : "Editar sucursal")</h2></div>
+                        <div class="tejido-2" aria-hidden="true"></div>
+                        <div class="panel-body">
+                            <div class="field">
+                                <label for="bname">Nombre</label>
+                                <input id="bname" class="input input-sm" maxlength="80" placeholder="ej. Miraflores" @bind="form.Name" />
+                            </div>
+                            <div class="field">
+                                <label for="baddr">Dirección (opcional)</label>
+                                <input id="baddr" class="input input-sm" maxlength="200" @bind="form.Address" />
+                                <span class="hint">Aparece en el ticket impreso.</span>
+                            </div>
+                            @if (form.Id is not null)
+                            {
+                                <label class="check"><input type="checkbox" @bind="form.Active" /> Activa</label>
+                            }
+                            @if (formError is not null)
+                            {
+                                <div class="alert" role="alert">@formError</div>
+                            }
+                            <div class="seg">
+                                <button type="submit" class="btn btn-primary" disabled="@busy">@(busy ? "Guardando…" : "Guardar")</button>
+                                <button type="button" class="btn btn-outline" @onclick="Close">Cancelar</button>
+                            </div>
+                        </div>
+                    </form>
+                }
+                else
+                {
+                    <div class="alert soft">Toca una sucursal para editarla.</div>
+                    @if (toast is not null)
+                    {
+                        <p class="toast" role="status" style="margin-top: 12px">@toast</p>
+                    }
+                }
+            </aside>
+        </div>
+    }
+</AdminShell>
+
+@code {
+    private sealed class BranchForm
+    {
+        public Guid? Id { get; set; }
+        public string Name { get; set; } = "";
+        public string? Address { get; set; }
+        public bool Active { get; set; } = true;
+    }
+
+    protected override IReadOnlyCollection<string> AllowedRoles => [Roles.Admin];
+
+    private bool loading = true, busy, editing;
+    private string? loadError, formError, toast;
+    private List<BranchDto> branches = [];
+    private BranchForm form = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Allowed) return;
+        try
+        {
+            await Ctx.EnsureLoadedAsync();
+            await LoadAsync();
+        }
+        catch (ApiException ex)
+        {
+            loadError = ex.Message;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task LoadAsync() => branches = await Api.GetAsync<List<BranchDto>>("api/branches") ?? [];
+
+    private void New() { form = new BranchForm(); editing = true; formError = toast = null; }
+    private void Edit(BranchDto b) { form = new BranchForm { Id = b.Id, Name = b.Name, Address = b.Address, Active = b.Active }; editing = true; formError = toast = null; }
+    private void Close() { editing = false; form = new BranchForm(); formError = null; }
+
+    private async Task SaveAsync()
+    {
+        formError = null;
+        if (string.IsNullOrWhiteSpace(form.Name)) { formError = "Escribe el nombre de la sucursal."; return; }
+        busy = true;
+        try
+        {
+            var body = new BranchUpsert(form.Name.Trim(), string.IsNullOrWhiteSpace(form.Address) ? null : form.Address.Trim(), form.Active);
+            var saved = form.Id is { } id
+                ? await Api.PutAsync<BranchDto>($"api/branches/{id}", body)
+                : await Api.PostAsync<BranchDto>("api/branches", body);
+            toast = $"Sucursal «{saved?.Name}» guardada.";
+            Close();
+            await LoadAsync();
+            await Ctx.ReloadBranchesAsync(); // el resto de pantallas usa la lista cacheada
+        }
+        catch (ApiException ex)
+        {
+            formError = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+}

@@ -24,13 +24,17 @@ dotnet ef migrations add <Nombre> -p src/KipuPOS.Api --configuration Release   #
 ```
 - La API aplica migraciones y crea el usuario de plataforma al arrancar.
 - Usuarios de prueba y contraseñas: constantes al inicio de `tools/seed-demo.py`. No repetirlas en el chat; apuntar a ese archivo.
-- Visual Studio con la API corriendo bloquea `bin/Debug`: compilar a otra salida (`-o`) o en Release.
+- Visual Studio con la API corriendo bloquea `bin/Debug`: compilar a otra salida (`-o`) o en Release. No lanzar dos `dotnet run` en paralelo: chocan al compilar `KipuPOS.Shared`.
+- Puertos fijos sin depender del perfil: API en `appsettings.Development.json` (`Urls`), Web con `_RunExtraArguments --urls` en el csproj.
+- LocalDB ("SQL Server process failed to start"): una instancia arrancada desde la consola de Claude no la ve Visual Studio, que intenta arrancar otra con los mismos archivos y falla. **Al terminar las pruebas, detenerla con `sqllocaldb stop MSSQLLocalDB`** (si quedó colgada: `-k`) y no usar `sqllocaldb start`; que la arranque la propia API desde VS.
 
 ## Reglas que no se negocian
 - **Multi-tenencia** (detalle en README): el negocio sale siempre del token (claim `tid`), nunca del cuerpo. Filtros globales de EF; no usar `FindAsync`; SQL manual debe filtrar `TenantId` a mano.
 - **`MapInboundClaims = false`** en `AddJwtBearer` (Program.cs). Sin eso el handler renombra `tid` al claim de Azure AD y todo usuario de negocio recibe 403.
 - Precios de producto **sin IGV**; el IGV es por negocio (`Tenant.IgvRate`). Redondeo a 2 decimales `AwayFromZero`.
 - Ventas: idempotentes por `Id` generado en el cliente; anuladas nunca se borran.
+- Pago mixto: las partes viven en `SalePayments`. Todo cálculo por forma de pago (cierre, reportes) se hace sobre las partes, no sobre `Sale.PaymentMethod`.
+- Mesas: `TableOrderService` deja pendiente en el DbContext el descuento de la cuenta y `SaleService.CreateAsync` lo guarda en la misma transacción que la venta. No separar esos dos pasos.
 - Enums viajan como texto: el cliente usa `JsonStringEnumConverter` (ver `ApiClient.Json`).
 - Logos: tabla `TenantAsset`, tipos `logo` (fondos claros) y `logo-dark` (fondos oscuros). Solo PNG/JPG/WebP ≤ 512 KB, tipo deducido del contenido; **SVG no** (puede llevar scripts).
 
@@ -59,7 +63,6 @@ Elegido por el usuario. Mantener en toda pantalla nueva; tokens en `wwwroot/css/
 - Para ver la app en el navegador integrado de Claude: ese panel no confía en el certificado HTTPS de desarrollo; usar HTTP (frontend `http://localhost:5200`, API por HTTP con `http://localhost:5200` agregado a `Cors:Origins`).
 
 ## Pendientes
-- **Tostadores Café**: carta real con precios, sucursales, RUC y ancho de impresora (58 u 80 mm) para el ticket impreso con `logo-tostadores-ticket.png`.
-- Pantallas de admin: catálogo, usuarios, sucursales, ventas y anulaciones, reportes, historial de turnos. Logo desde el panel de plataforma.
-- Antes de producción: prueba automática de aislamiento entre negocios, `AddRateLimiter` en el login, despliegue (Azure u otro).
-- Después: facturación electrónica SUNAT.
+Ver `ROADMAP.md`: fases, tareas con casillas y datos que faltan del cliente. Al terminar una tarea, marcarla ahí.
+Ticket impreso: `Components/TicketPrint.razor` + reglas `@media print` en `app.css` (72 mm imprimibles en papel de 80 mm; impresora de Tostadores: Epson TM-T88V). Preferencias por equipo en `Services/PrinterSettings` (localStorage).
+En Visual Studio se arranca todo con el perfil "KipuPOS (API + Web)" de `KipuPOS.slnLaunch`.

@@ -13,6 +13,7 @@ builder.Services.AddScoped(_ => new HttpClient { BaseAddress = new Uri(apiBase) 
 builder.Services.AddScoped<AuthSession>();
 builder.Services.AddScoped<ApiClient>();
 builder.Services.AddScoped<PosContext>();
+builder.Services.AddScoped<PrinterSettings>();
 
 var host = builder.Build();
 await host.Services.GetRequiredService<AuthSession>().InitializeAsync();

@@ -27,6 +27,10 @@ public class AppDbContext : DbContext
     public DbSet<Sale> Sales => Set<Sale>();
     public DbSet<SaleLine> SaleLines => Set<SaleLine>();
     public DbSet<SaleAudit> SaleAudits => Set<SaleAudit>();
+    public DbSet<SalePayment> SalePayments => Set<SalePayment>();
+    public DbSet<DiningTable> DiningTables => Set<DiningTable>();
+    public DbSet<TableOrder> TableOrders => Set<TableOrder>();
+    public DbSet<TableOrderLine> TableOrderLines => Set<TableOrderLine>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -130,12 +134,52 @@ public class AppDbContext : DbContext
             e.Property(x => x.PaymentMethod).HasConversion<string>().HasMaxLength(20);
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
             e.Property(x => x.VoidReason).HasMaxLength(200);
+            e.Property(x => x.TableName).HasMaxLength(40);
             e.Property(x => x.RowVersion).IsRowVersion();
             e.HasOne(x => x.CashSession).WithMany().HasForeignKey(x => x.CashSessionId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(x => x.Cashier).WithMany().HasForeignKey(x => x.CashierId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(x => x.VoidedBy).WithMany().HasForeignKey(x => x.VoidedById).OnDelete(DeleteBehavior.Restrict);
             e.HasMany(x => x.Lines).WithOne().HasForeignKey(l => l.SaleId).OnDelete(DeleteBehavior.Cascade);
+            e.HasMany(x => x.Payments).WithOne().HasForeignKey(p => p.SaleId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.TableOrder).WithMany().HasForeignKey(x => x.TableOrderId).OnDelete(DeleteBehavior.Restrict);
+            e.HasQueryFilter(x => x.TenantId == CurrentTenantId);
+        });
+
+        b.Entity<SalePayment>(e =>
+        {
+            e.Property(x => x.Method).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.Amount).HasPrecision(18, 2);
+            e.HasIndex(x => new { x.SaleId, x.Method });
+            e.HasQueryFilter(x => x.TenantId == CurrentTenantId);
+        });
+
+        b.Entity<DiningTable>(e =>
+        {
+            e.Property(x => x.Name).HasMaxLength(40);
+            e.HasIndex(x => new { x.BranchId, x.Name }).IsUnique();
+            e.HasOne<Branch>().WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
+            e.HasQueryFilter(x => x.TenantId == CurrentTenantId);
+        });
+
+        b.Entity<TableOrder>(e =>
+        {
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.RowVersion).IsRowVersion();
+            // Una sola cuenta abierta por mesa
+            e.HasIndex(x => x.TableId).IsUnique().HasFilter("[Status] = 'Open'");
+            e.HasIndex(x => new { x.BranchId, x.Status });
+            e.HasOne(x => x.Table).WithMany().HasForeignKey(x => x.TableId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.OpenedBy).WithMany().HasForeignKey(x => x.OpenedById).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<Branch>().WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
+            e.HasMany(x => x.Lines).WithOne().HasForeignKey(l => l.OrderId).OnDelete(DeleteBehavior.Cascade);
+            e.HasQueryFilter(x => x.TenantId == CurrentTenantId);
+        });
+
+        b.Entity<TableOrderLine>(e =>
+        {
+            e.Property(x => x.Note).HasMaxLength(200);
+            e.HasOne(x => x.Product).WithMany().HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.Restrict);
             e.HasQueryFilter(x => x.TenantId == CurrentTenantId);
         });
 

@@ -55,7 +55,9 @@ public static class Mapping
         s.Id, s.Number, s.CreatedAtUtc, s.CashSessionId, s.CashierId, s.Cashier?.FullName ?? "",
         s.PaymentMethod, s.Status, s.Subtotal, s.Igv, s.Total, s.VoidReason, s.VoidedBy?.FullName, s.VoidedAtUtc, reprints,
         s.Lines.OrderBy(l => l.Position)
-            .Select(l => new SaleLineDto(l.ProductId, l.ProductName, l.UnitPrice, l.Quantity, l.Note, l.LineSubtotal)).ToList());
+            .Select(l => new SaleLineDto(l.ProductId, l.ProductName, l.UnitPrice, l.Quantity, l.Note, l.LineSubtotal)).ToList(),
+        s.Payments.OrderByDescending(p => p.Amount).Select(p => new SalePaymentDto(p.Method, p.Amount)).ToList(),
+        s.TableName);
 
     public static UserDto ToDto(this User u) => new(u.Id, u.FullName, u.Username, u.Role, u.Active, u.LastLoginUtc, u.BranchId);
     public static TenantDto ToDto(this Tenant t) => new(t.Id, t.Code, t.Name, t.Ruc, t.Active, t.IgvRate, t.UtcOffsetHours, t.CreatedAtUtc);

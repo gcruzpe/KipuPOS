@@ -47,8 +47,8 @@ public class CashSessionService(AppDbContext db)
         if (s.ClosedAtUtc is not null) return ServiceResult<SessionSummaryDto>.Fail(409, "El turno ya está cerrado.");
         if (countedCash < 0 || countedCash > 1_000_000) return ServiceResult<SessionSummaryDto>.Fail(400, "Monto contado inválido.");
 
-        var cashSales = await db.Sales.Where(x => x.CashSessionId == id && x.Status == SaleStatus.Valid && x.PaymentMethod == PaymentMethod.Efectivo)
-            .SumAsync(x => x.Total, ct);
+        // Con pago mixto solo cuenta la parte pagada en efectivo
+        var cashSales = await ValidPayments(id).Where(p => p.Method == PaymentMethod.Efectivo).SumAsync(p => p.Amount, ct);
 
         s.ClosedAtUtc = DateTime.UtcNow;
         s.CountedCash = Money.Round(countedCash);
@@ -93,17 +93,23 @@ public class CashSessionService(AppDbContext db)
     private async Task<SessionSummaryDto> BuildSummaryAsync(Guid id, CancellationToken ct)
     {
         var session = (await LoadAsync(id, ct))!;
-        var groups = await db.Sales.AsNoTracking().Where(s => s.CashSessionId == id && s.Status == SaleStatus.Valid)
-            .GroupBy(s => s.PaymentMethod)
-            .Select(g => new { Method = g.Key, Count = g.Count(), Total = g.Sum(x => x.Total) }).ToListAsync(ct);
+        // Por forma de pago a partir de las partes del pago: una venta mixta aparece en cada método que usó
+        var groups = await ValidPayments(id)
+            .GroupBy(p => p.Method)
+            .Select(g => new { Method = g.Key, Count = g.Select(x => x.SaleId).Distinct().Count(), Total = g.Sum(x => x.Amount) }).ToListAsync(ct);
         var byPayment = groups.OrderBy(g => g.Method).Select(g => new PaymentTotalDto(g.Method, g.Count, g.Total)).ToList();
-        var totalIgv = await db.Sales.AsNoTracking().Where(s => s.CashSessionId == id && s.Status == SaleStatus.Valid).SumAsync(s => s.Igv, ct);
+        var validSales = db.Sales.AsNoTracking().Where(s => s.CashSessionId == id && s.Status == SaleStatus.Valid);
+        var totalIgv = await validSales.SumAsync(s => s.Igv, ct);
+        var totalSales = await validSales.SumAsync(s => s.Total, ct);
         var voidedCount = await db.Sales.AsNoTracking().CountAsync(s => s.CashSessionId == id && s.Status == SaleStatus.Voided, ct);
         var voidedTotal = await db.Sales.AsNoTracking().Where(s => s.CashSessionId == id && s.Status == SaleStatus.Voided).SumAsync(s => s.Total, ct);
 
         var cashSales = byPayment.Where(p => p.Method == PaymentMethod.Efectivo).Sum(p => p.Total);
         // En un turno cerrado se conserva el esperado guardado al cierre (anular después no lo altera)
         var expected = session.ExpectedCash ?? session.OpeningCash + cashSales;
-        return new SessionSummaryDto(session, cashSales, expected, byPayment.Sum(p => p.Total), totalIgv, byPayment, voidedCount, voidedTotal);
+        return new SessionSummaryDto(session, cashSales, expected, totalSales, totalIgv, byPayment, voidedCount, voidedTotal);
     }
+
+    private IQueryable<SalePayment> ValidPayments(Guid sessionId) =>
+        db.SalePayments.AsNoTracking().Where(p => db.Sales.Any(s => s.Id == p.SaleId && s.CashSessionId == sessionId && s.Status == SaleStatus.Valid));
 }

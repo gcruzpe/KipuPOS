@@ -62,14 +62,37 @@ public record SessionSummaryDto(CashSessionDto Session, decimal CashSales, decim
 
 // ---------- Ventas ----------
 public record SaleLineRequest(Guid ProductId, int Quantity, string? Note);
+// Pago mixto: varias partes que deben sumar exactamente el total. Sin Payments, se paga todo con PaymentMethod.
+public record SalePaymentRequest(PaymentMethod Method, decimal Amount);
+public record SalePaymentDto(PaymentMethod Method, decimal Amount);
 // Id lo genera el cliente (idempotencia). CreatedAtUtc debe enviarse en UTC.
-public record CreateSaleRequest(Guid Id, Guid CashSessionId, DateTime CreatedAtUtc, PaymentMethod PaymentMethod, IReadOnlyList<SaleLineRequest> Lines);
+public record CreateSaleRequest(Guid Id, Guid CashSessionId, DateTime CreatedAtUtc, PaymentMethod PaymentMethod, IReadOnlyList<SaleLineRequest> Lines,
+    IReadOnlyList<SalePaymentRequest>? Payments = null);
 public record VoidSaleRequest(string Reason);
 public record SaleLineDto(Guid ProductId, string ProductName, decimal UnitPrice, int Quantity, string? Note, decimal LineSubtotal);
+// PaymentMethod = el pago principal (el de mayor monto); el detalle está en Payments
 public record SaleDto(Guid Id, long Number, DateTime CreatedAtUtc, Guid CashSessionId, Guid CashierId, string CashierName,
     PaymentMethod PaymentMethod, SaleStatus Status, decimal Subtotal, decimal Igv, decimal Total,
-    string? VoidReason, string? VoidedByName, DateTime? VoidedAtUtc, int ReprintCount, IReadOnlyList<SaleLineDto> Lines);
-public record SaleListItemDto(Guid Id, long Number, DateTime CreatedAtUtc, string CashierName, PaymentMethod PaymentMethod, SaleStatus Status, decimal Total);
+    string? VoidReason, string? VoidedByName, DateTime? VoidedAtUtc, int ReprintCount, IReadOnlyList<SaleLineDto> Lines,
+    IReadOnlyList<SalePaymentDto> Payments, string? TableName);
+public record SaleListItemDto(Guid Id, long Number, DateTime CreatedAtUtc, string CashierName, PaymentMethod PaymentMethod, SaleStatus Status, decimal Total,
+    bool MixedPayment = false, string? TableName = null);
+
+// ---------- Mesas y cuentas abiertas ----------
+public record DiningTableDto(Guid Id, Guid BranchId, string Name, int SortOrder, bool Active);
+public record DiningTableUpsert(Guid BranchId, string Name, int SortOrder, bool Active = true);
+// Estado de las mesas para la caja; Subtotal es estimado (sin IGV) con los precios de hoy
+public record TableBoardItemDto(Guid TableId, string Name, Guid? OrderId, DateTime? OpenedAtUtc, int Items, decimal Subtotal);
+public record OrderLineRequest(Guid ProductId, int Quantity, string? Note);
+public record OrderLineDto(Guid ProductId, string ProductName, decimal UnitPrice, int Quantity, string? Note, decimal LineSubtotal);
+public record TableOrderDto(Guid Id, Guid TableId, string TableName, DateTime OpenedAtUtc, string OpenedByName,
+    IReadOnlyList<OrderLineDto> Lines, decimal Subtotal);
+public record SetOrderLinesRequest(IReadOnlyList<OrderLineRequest> Lines);
+public record MoveOrderRequest(Guid TableId); // mesa libre = mover; mesa ocupada = unir
+// Lines null = cobrar toda la cuenta; con Lines = dividir (solo esas cantidades)
+public record CheckoutOrderRequest(Guid SaleId, Guid CashSessionId, DateTime CreatedAtUtc, PaymentMethod PaymentMethod,
+    IReadOnlyList<SalePaymentRequest>? Payments, IReadOnlyList<SaleLineRequest>? Lines);
+public record CheckoutResultDto(SaleDto Sale, TableOrderDto? Order); // Order null = la mesa quedó libre
 public record PagedResult<T>(IReadOnlyList<T> Items, int Total, int Page, int PageSize);
 
 // ---------- Reportes ----------

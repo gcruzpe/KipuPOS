@@ -22,6 +22,7 @@ ARGS.add_argument("--api", default="https://localhost:7100")
 ARGS.add_argument("--tenant", default="kipu-demo")
 ARGS.add_argument("--name", default="Café Demo")
 ARGS.add_argument("--branch", default="Sucursal Centro")
+ARGS.add_argument("--mesas", type=int, default=6, help="mesas a crear en la sucursal si aún no tiene (0 = ninguna)")
 ARGS.add_argument("--logos", help="carpeta con logo-*.png (el que termina en -claro.png es para fondos oscuros)")
 OPTS = ARGS.parse_args()
 BASE = OPTS.api.rstrip("/")
@@ -111,6 +112,13 @@ def main():
         for name, price, is_menu in items:
             if name not in existing:
                 call("POST", "/api/products", {"categoryId": c["id"], "name": name, "price": price, "active": True, "isMenuItem": is_menu}, atoken)
+
+    # Mesas de la sucursal del administrador (Mesa 1..N) si todavía no tiene
+    _, tables = call("GET", "/api/tables", token=atoken)
+    if OPTS.mesas > 0 and not any(t["branchId"] == admin["branchId"] for t in tables):
+        for i in range(1, OPTS.mesas + 1):
+            call("POST", "/api/tables", {"branchId": admin["branchId"], "name": f"Mesa {i}", "sortOrder": i, "active": True}, atoken)
+        print(f"{OPTS.mesas} mesas creadas.")
 
     # Cajero en la sucursal del administrador
     _, users = call("GET", "/api/users", token=atoken)

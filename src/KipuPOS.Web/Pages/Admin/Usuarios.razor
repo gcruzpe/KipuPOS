@@ -1,0 +1,259 @@
+@page "/admin/usuarios"
+@inherits SecurePage
+@inject PosContext Ctx
+
+<PageTitle>Usuarios · KipuPOS</PageTitle>
+
+@if (!Allowed) { return; }
+
+<AdminShell Brand="@Ctx.Branding">
+    <div style="display: flex; flex-direction: column; gap: 6px">
+        <h1>Usuarios</h1>
+        <p class="muted" style="margin: 0">Cada persona entra con su propio usuario. Los cajeros venden en su sucursal; los administradores gestionan todo el negocio.</p>
+    </div>
+
+    @if (loadError is not null)
+    {
+        <div class="alert" role="alert">@loadError</div>
+    }
+    else if (loading)
+    {
+        <p class="muted">Cargando usuarios…</p>
+    }
+    else
+    {
+        <div class="cols">
+            <section class="col-main">
+                <div class="toolbar"><button type="button" class="btn btn-dark" @onclick="NewUser">+ Nuevo usuario</button></div>
+                <div class="panel table-wrap">
+                    <table class="k-table" style="min-width: 640px">
+                        <thead>
+                            <tr>
+                                <th scope="col">Nombre</th><th scope="col">Usuario</th><th scope="col">Rol</th>
+                                <th scope="col">Sucursal</th><th scope="col">Estado</th><th scope="col">Último ingreso</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var u in users)
+                            {
+                                <tr class="clickable @(form.Id == u.Id ? "selected" : "")" @onclick="() => EditUser(u)">
+                                    <td style="font-weight: 800">@u.FullName</td>
+                                    <td class="mono" style="font-size: 14px">@u.Username</td>
+                                    <td>@Fmt.Role(u.Role)</td>
+                                    <td>@(Ctx.BranchName(u.BranchId) ?? "—")</td>
+                                    <td><span class="tag @(u.Active ? "tag-ok" : "tag-sold")">@(u.Active ? "activo" : "inactivo")</span></td>
+                                    <td class="muted" style="font-size: 14px">@(u.LastLoginUtc is { } l ? Fmt.Stamp(Ctx.ToLocal(l)) : "nunca")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <aside class="col-side">
+                @if (temp is not null)
+                {
+                    <div class="temp-pass" role="status" style="margin-bottom: 16px">
+                        <span>Contraseña temporal de <strong>@temp.User.Username</strong> (se muestra una sola vez; al entrar deberá cambiarla):</span>
+                        <span class="mono">@temp.TemporaryPassword</span>
+                    </div>
+                }
+                @if (editing)
+                {
+                    <form class="panel" @onsubmit="SaveAsync" @onsubmit:preventDefault>
+                        <div class="panel-head"><h2>@(form.Id is null ? "Nuevo usuario" : "Editar usuario")</h2></div>
+                        <div class="tejido-2" aria-hidden="true"></div>
+                        <div class="panel-body">
+                            <div class="field">
+                                <label for="ufull">Nombre completo</label>
+                                <input id="ufull" class="input input-sm" maxlength="120" @bind="form.FullName" />
+                            </div>
+                            @if (form.Id is null)
+                            {
+                                <div class="field">
+                                    <label for="uname">Usuario</label>
+                                    <input id="uname" class="input input-sm code" maxlength="30" autocapitalize="none" spellcheck="false" placeholder="ej. lucia" @bind="form.Username" />
+                                    <span class="hint">3 a 30 caracteres: letras minúsculas, números, punto o guion.</span>
+                                </div>
+                            }
+                            <div class="form-grid">
+                                <div class="field">
+                                    <label for="urole">Rol</label>
+                                    <select id="urole" class="select" @bind="form.Role">
+                                        <option value="@Roles.Cajero">Cajero</option>
+                                        <option value="@Roles.Admin">Administrador</option>
+                                    </select>
+                                </div>
+                                <div class="field">
+                                    <label for="ubranch">Sucursal</label>
+                                    <select id="ubranch" class="select" @bind="form.BranchId">
+                                        <option value="">@(form.Role == Roles.Admin ? "Todas" : "Elegir…")</option>
+                                        @foreach (var b in Ctx.Branches.Where(b => b.Active))
+                                        {
+                                            <option value="@b.Id">@b.Name</option>
+                                        }
+                                    </select>
+                                </div>
+                            </div>
+                            @if (form.Id is not null)
+                            {
+                                <label class="check"><input type="checkbox" @bind="form.Active" /> Activo (puede iniciar sesión)</label>
+                            }
+                            @if (formError is not null)
+                            {
+                                <div class="alert" role="alert">@formError</div>
+                            }
+                            <div class="seg" style="flex-wrap: wrap">
+                                <button type="submit" class="btn btn-primary" disabled="@busy">@(busy ? "Guardando…" : form.Id is null ? "Crear usuario" : "Guardar")</button>
+                                <button type="button" class="btn btn-outline" @onclick="Close">Cancelar</button>
+                            </div>
+                            @if (form.Id is { } uid)
+                            {
+                                <div class="tejido-2" aria-hidden="true" style="margin: 4px 0"></div>
+                                @if (confirmReset)
+                                {
+                                    <p class="muted" style="margin: 0; font-size: 14px">Se generará una contraseña temporal nueva y la actual dejará de funcionar.</p>
+                                    <div class="seg">
+                                        <button type="button" class="btn btn-primary btn-sm" disabled="@busy" @onclick="() => ResetAsync(uid)">Sí, restablecer</button>
+                                        <button type="button" class="btn btn-outline btn-sm" @onclick="() => confirmReset = false">No</button>
+                                    </div>
+                                }
+                                else
+                                {
+                                    <button type="button" class="btn btn-outline btn-sm" style="align-self: flex-start" @onclick="() => confirmReset = true">Restablecer contraseña</button>
+                                }
+                            }
+                        </div>
+                    </form>
+                }
+                else
+                {
+                    <div class="alert soft">Toca un usuario para editarlo o restablecer su contraseña.</div>
+                    @if (toast is not null)
+                    {
+                        <p class="toast" role="status" style="margin-top: 12px">@toast</p>
+                    }
+                }
+            </aside>
+        </div>
+    }
+</AdminShell>
+
+@code {
+    private sealed class UserForm
+    {
+        public Guid? Id { get; set; }
+        public string FullName { get; set; } = "";
+        public string Username { get; set; } = "";
+        public string Role { get; set; } = Roles.Cajero;
+        public Guid? BranchId { get; set; }
+        public bool Active { get; set; } = true;
+    }
+
+    protected override IReadOnlyCollection<string> AllowedRoles => [Roles.Admin];
+
+    private bool loading = true, busy, editing, confirmReset;
+    private string? loadError, formError, toast;
+    private List<UserDto> users = [];
+    private UserForm form = new();
+    private TempPasswordResponse? temp;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Allowed) return;
+        try
+        {
+            await Ctx.EnsureLoadedAsync();
+            await LoadAsync();
+        }
+        catch (ApiException ex)
+        {
+            loadError = ex.Message;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task LoadAsync() => users = await Api.GetAsync<List<UserDto>>("api/users") ?? [];
+
+    private void NewUser()
+    {
+        form = new UserForm { BranchId = Ctx.Branches.FirstOrDefault(b => b.Active)?.Id };
+        editing = true;
+        confirmReset = false;
+        formError = toast = null;
+        temp = null;
+    }
+
+    private void EditUser(UserDto u)
+    {
+        form = new UserForm { Id = u.Id, FullName = u.FullName, Username = u.Username, Role = u.Role, BranchId = u.BranchId, Active = u.Active };
+        editing = true;
+        confirmReset = false;
+        formError = toast = null;
+        temp = null;
+    }
+
+    private void Close()
+    {
+        editing = false;
+        form = new UserForm();
+        formError = null;
+    }
+
+    private async Task SaveAsync()
+    {
+        formError = null;
+        if (string.IsNullOrWhiteSpace(form.FullName)) { formError = "Escribe el nombre completo."; return; }
+        if (form.Role == Roles.Cajero && form.BranchId is null) { formError = "Un cajero necesita una sucursal."; return; }
+        busy = true;
+        try
+        {
+            if (form.Id is { } id)
+            {
+                var u = await Api.PutAsync<UserDto>($"api/users/{id}", new UpdateUserRequest(form.FullName.Trim(), form.Role, form.Active, form.BranchId));
+                toast = $"«{u?.FullName}» actualizado.";
+                Close();
+            }
+            else
+            {
+                if (string.IsNullOrWhiteSpace(form.Username)) { formError = "Escribe el usuario."; return; }
+                temp = await Api.PostAsync<TempPasswordResponse>("api/users",
+                    new CreateUserRequest(form.FullName.Trim(), form.Username.Trim().ToLowerInvariant(), form.Role, form.BranchId));
+                Close();
+            }
+            await LoadAsync();
+        }
+        catch (ApiException ex)
+        {
+            formError = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task ResetAsync(Guid id)
+    {
+        formError = null;
+        busy = true;
+        try
+        {
+            temp = await Api.PostAsync<TempPasswordResponse>($"api/users/{id}/reset-password", null);
+            confirmReset = false;
+            Close();
+            await LoadAsync();
+        }
+        catch (ApiException ex)
+        {
+            formError = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+}

@@ -11,6 +11,8 @@ public static class Fmt
     public static string Money(decimal v) => (v < 0 ? "− S/ " : "S/ ") + Math.Abs(v).ToString("N2", Inv);
     public static string Ticket(long number) => "#" + number.ToString("D6", Inv);
     public static string Time(DateTime local) => local.ToString("HH:mm", Inv);
+    public static string Stamp(DateTime local) => local.ToString("dd/MM/yyyy HH:mm", Inv);
+    public static string Role(string role) => role == Roles.Cajero ? "Cajero" : role == Roles.Admin ? "Administrador" : role;
 
     public static decimal Round(decimal v) => Math.Round(v, 2, MidpointRounding.AwayFromZero);
 

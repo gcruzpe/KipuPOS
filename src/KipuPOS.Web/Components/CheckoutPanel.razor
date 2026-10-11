@@ -1,0 +1,244 @@
+@* Cobro: elegir qué se cobra (dividir cuenta), forma de pago simple o mixta, y vuelto del efectivo. *@
+<div class="panel">
+    <div class="panel-head">
+        <h2>@Title</h2>
+        <button type="button" class="btn btn-outline btn-sm" @onclick="OnCancel">Volver</button>
+    </div>
+    <div class="tejido-2" aria-hidden="true"></div>
+
+    @if (AllowSplit)
+    {
+        <div class="panel-body" style="padding-bottom: 0">
+            <div class="seg" role="group" aria-label="Qué se cobra">
+                <button type="button" class="pill pay" aria-pressed="@(!splitting ? "true" : "false")" @onclick="ChargeAll">Toda la cuenta</button>
+                <button type="button" class="pill pay" aria-pressed="@(splitting ? "true" : "false")" @onclick="StartSplit">Dividir</button>
+            </div>
+            @if (splitting)
+            {
+                <p class="muted" style="margin: 0; font-size: 14px">Elige cuánto de cada producto paga esta persona. Lo demás queda en la mesa.</p>
+            }
+        </div>
+    }
+
+    <div class="lines" style="min-height: 0">
+        @for (var i = 0; i < Lines.Count; i++)
+        {
+            var idx = i;
+            var l = Lines[idx];
+            <div class="line">
+                <div class="info">
+                    <strong>@l.Name</strong>
+                    <span>@(l.Note is null ? "" : $"{l.Note} · ")@Fmt.Money(l.UnitPrice) c/u</span>
+                </div>
+                @if (splitting)
+                {
+                    <button type="button" class="btn-round" aria-label="Uno menos de @l.Name" @onclick="() => Step(idx, -1)">−</button>
+                    <span class="qty">@selected[idx]<span class="muted" style="font-size: 12px">/@l.Quantity</span></span>
+                    <button type="button" class="btn-round filled" aria-label="Uno más de @l.Name" @onclick="() => Step(idx, 1)">+</button>
+                }
+                else
+                {
+                    <span class="qty">@l.Quantity</span>
+                }
+                <span class="sub">@Fmt.Money(Fmt.Round(l.UnitPrice * selected[idx]))</span>
+            </div>
+        }
+    </div>
+
+    <div class="panel-body">
+        <dl class="totals">
+            <dt>Subtotal</dt><dd>@Fmt.Money(Subtotal)</dd>
+            <dt>IGV @((IgvRate * 100).ToString("0.##"))%</dt><dd>@Fmt.Money(Igv)</dd>
+        </dl>
+        <div class="grand"><span>A cobrar</span><span>@Fmt.Money(Total)</span></div>
+
+        @if (!mixed)
+        {
+            <div class="pay-grid" role="group" aria-label="Forma de pago">
+                @foreach (var m in Enum.GetValues<PaymentMethod>())
+                {
+                    <button type="button" class="pill pay" aria-pressed="@(m == method ? "true" : "false")" @onclick="() => method = m">@Fmt.Method(m)</button>
+                }
+            </div>
+            <button type="button" class="btn btn-outline btn-sm" style="align-self: flex-start" @onclick="StartMixed">Pago mixto…</button>
+        }
+        else
+        {
+            <div style="display: flex; flex-direction: column; gap: 8px">
+                @for (var i = 0; i < parts.Count; i++)
+                {
+                    var idx = i;
+                    <div style="display: flex; gap: 8px; align-items: center">
+                        <label class="sr-only" for="pm@idx">Forma de pago @(idx + 1)</label>
+                        <select id="pm@idx" class="select" style="flex: 0 0 130px" value="@parts[idx].Method" @onchange="e => SetMethod(idx, e)">
+                            @foreach (var m in Enum.GetValues<PaymentMethod>())
+                            {
+                                <option value="@m">@Fmt.Method(m)</option>
+                            }
+                        </select>
+                        <div class="money-input" style="height: 46px; flex: 1">
+                            <span style="font-size: 15px">S/</span>
+                            <input type="text" inputmode="decimal" style="font-size: 18px" aria-label="Monto @(idx + 1)"
+                                   value="@parts[idx].Text" @oninput="e => parts[idx].Text = e.Value?.ToString() ?? string.Empty" />
+                        </div>
+                        @if (parts.Count > 1)
+                        {
+                            <button type="button" class="btn-round" style="border-color: var(--soft)" aria-label="Quitar pago @(idx + 1)" @onclick="() => parts.RemoveAt(idx)">×</button>
+                        }
+                    </div>
+                }
+                <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap">
+                    @if (parts.Count < 4)
+                    {
+                        <button type="button" class="btn btn-outline btn-sm" @onclick="AddPart">+ Otra forma de pago</button>
+                    }
+                    <span class="mono" style="font-size: 14px; color: @(Remaining == 0 ? "var(--verde)" : "var(--grana)")">
+                        @(Remaining == 0 ? "Pagos completos" : Remaining > 0 ? $"Falta {Fmt.Money(Remaining)}" : $"Sobra {Fmt.Money(-Remaining)}")
+                    </span>
+                </div>
+                <button type="button" class="btn btn-outline btn-sm" style="align-self: flex-start" @onclick="() => mixed = false">Un solo pago</button>
+            </div>
+        }
+
+        @if (CashPart > 0)
+        {
+            <div class="field">
+                <label for="received">Efectivo recibido (para calcular el vuelto)</label>
+                <div class="money-input" style="height: 50px">
+                    <span>S/</span>
+                    <input id="received" type="text" inputmode="decimal" style="font-size: 20px" placeholder="@CashPart.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)"
+                           value="@receivedText" @oninput="e => receivedText = e.Value?.ToString() ?? string.Empty" />
+                </div>
+                @if (Change is { } c)
+                {
+                    <span class="mono" style="font-size: 18px; font-weight: 700; color: @(c >= 0 ? "var(--verde)" : "var(--grana)")">
+                        @(c >= 0 ? $"Vuelto: {Fmt.Money(c)}" : $"Faltan {Fmt.Money(-c)}")
+                    </span>
+                }
+            </div>
+        }
+
+        @if (Error is not null)
+        {
+            <div class="alert" role="alert">@Error</div>
+        }
+        <button type="button" class="btn btn-primary btn-lg btn-block" disabled="@(!CanConfirm || Busy)" @onclick="ConfirmAsync">
+            @(Busy ? "Registrando…" : $"Cobrar {Fmt.Money(Total)}")
+        </button>
+    </div>
+</div>
+
+@code {
+    public sealed record Line(Guid ProductId, string Name, decimal UnitPrice, int Quantity, string? Note);
+    // Lines null = se cobra todo; Payments null = un solo pago con Method
+    public sealed record Choice(IReadOnlyList<SaleLineRequest>? Lines, PaymentMethod Method, IReadOnlyList<SalePaymentRequest>? Payments, decimal Total);
+
+    private sealed class Part(PaymentMethod method, string text)
+    {
+        public PaymentMethod Method { get; set; } = method;
+        public string Text { get; set; } = text;
+        public decimal Amount => Fmt.TryParseMoney(Text, out var v) ? Fmt.Round(v) : 0;
+    }
+
+    [Parameter, EditorRequired] public IReadOnlyList<Line> Lines { get; set; } = [];
+    [Parameter] public bool AllowSplit { get; set; }
+    [Parameter] public decimal IgvRate { get; set; } = 0.18m;
+    [Parameter] public string Title { get; set; } = "Cobrar";
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public string? Error { get; set; }
+    [Parameter] public PaymentMethod InitialMethod { get; set; } = PaymentMethod.Efectivo;
+    [Parameter] public EventCallback<Choice> OnConfirm { get; set; }
+    [Parameter] public EventCallback OnCancel { get; set; }
+
+    private IReadOnlyList<Line>? _seen;
+    private int[] selected = [];
+    private bool splitting, mixed;
+    private PaymentMethod method;
+    private List<Part> parts = [];
+    private string receivedText = "";
+
+    protected override void OnParametersSet()
+    {
+        if (ReferenceEquals(_seen, Lines)) return;
+        _seen = Lines;
+        selected = Lines.Select(l => l.Quantity).ToArray();
+        splitting = mixed = false;
+        method = InitialMethod;
+        parts = [];
+        receivedText = "";
+    }
+
+    private decimal Subtotal => Lines.Select((l, i) => Fmt.Round(l.UnitPrice * selected[i])).Sum();
+    private decimal Igv => Fmt.Round(Subtotal * IgvRate);
+    private decimal Total => Subtotal + Igv;
+    private decimal Remaining => Total - parts.Sum(p => p.Amount);
+    private decimal CashPart => mixed ? parts.Where(p => p.Method == PaymentMethod.Efectivo).Sum(p => p.Amount) : method == PaymentMethod.Efectivo ? Total : 0;
+    private decimal? Change => Fmt.TryParseMoney(receivedText, out var r) && receivedText.Trim().Length > 0 ? Fmt.Round(r) - CashPart : null;
+
+    private bool CanConfirm => Total > 0
+        && (!mixed || (Remaining == 0 && parts.All(p => p.Amount > 0)))
+        && (Change is null || Change >= 0);
+
+    private void ChargeAll()
+    {
+        splitting = false;
+        selected = Lines.Select(l => l.Quantity).ToArray();
+        ResetParts();
+    }
+
+    private void StartSplit()
+    {
+        splitting = true;
+        selected = new int[Lines.Count]; // empieza en cero: se elige lo que paga esta persona
+        ResetParts();
+    }
+
+    private void Step(int i, int delta)
+    {
+        selected[i] = Math.Clamp(selected[i] + delta, 0, Lines[i].Quantity);
+        ResetParts();
+    }
+
+    private void StartMixed()
+    {
+        mixed = true;
+        parts = [new Part(method, Total.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture))];
+    }
+
+    private void AddPart()
+    {
+        var used = parts.Select(p => p.Method).ToHashSet();
+        var next = Enum.GetValues<PaymentMethod>().FirstOrDefault(m => !used.Contains(m), PaymentMethod.Yape);
+        var rest = Math.Max(0, Remaining);
+        parts.Add(new Part(next, rest.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)));
+    }
+
+    private void SetMethod(int i, ChangeEventArgs e)
+    {
+        if (Enum.TryParse<PaymentMethod>(e.Value?.ToString(), out var m)) parts[i].Method = m;
+    }
+
+    // Si cambia lo que se cobra, el pago mixto se rehace sobre el nuevo total
+    private void ResetParts()
+    {
+        if (mixed) parts = [new Part(parts.FirstOrDefault()?.Method ?? method, Total.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture))];
+    }
+
+    private async Task ConfirmAsync()
+    {
+        if (!CanConfirm || Busy) return;
+        IReadOnlyList<SaleLineRequest>? lines = splitting
+            ? Lines.Select((l, i) => new SaleLineRequest(l.ProductId, selected[i], l.Note)).Where(x => x.Quantity > 0).ToList()
+            : null;
+        if (mixed)
+        {
+            var payments = parts.Select(p => new SalePaymentRequest(p.Method, p.Amount)).ToList();
+            var main = payments.OrderByDescending(p => p.Amount).First().Method;
+            await OnConfirm.InvokeAsync(new Choice(lines, main, payments, Total));
+        }
+        else
+        {
+            await OnConfirm.InvokeAsync(new Choice(lines, method, null, Total));
+        }
+    }
+}

@@ -243,6 +243,64 @@ textarea.input { height: auto; padding: 12px 16px; font-size: 15px; resize: vert
     .grand span:last-child { font-size: 32px; }
 }
 
+/* ---------- Formularios de administración ---------- */
+.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.form-grid .full { grid-column: 1 / -1; }
+.check { display: inline-flex; align-items: center; gap: 10px; min-height: 44px; font-size: 15px; font-weight: 600; cursor: pointer; }
+.check input { width: 22px; height: 22px; accent-color: var(--grana); }
+.k-table tr.selected td { background: #FFF3DF; }
+.k-table tr.clickable { cursor: pointer; }
+.k-table tr.clickable:hover td { background: #FFF8EC; }
+.k-table .actions { text-align: right; white-space: nowrap; }
+.btn-sm { min-height: 38px; padding: 0 14px; font-size: 14px; }
+.temp-pass { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; border-radius: var(--field-radius); background: var(--ink); color: var(--on-dark); }
+.temp-pass .mono { font-size: 20px; color: var(--oro); user-select: all; }
+.seg { display: inline-flex; gap: 6px; }
+.empty-row td { color: var(--muted); }
+.voided td { color: var(--muted); text-decoration: line-through; }
+.voided td:last-child { text-decoration: none; }
+
+/* ---------- Mesas ---------- */
+.grid-tables { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 14px; }
+.t-card { min-height: 132px; display: flex; flex-direction: column; padding: 0; border-radius: var(--card-radius); border: 2px solid var(--ink); background: var(--surface); color: var(--ink); text-align: left; overflow: hidden; }
+.t-card .band { height: 10px; background: var(--verde); }
+.t-card.busy { background: var(--ink); color: var(--on-dark); }
+.t-card.busy .band { background: var(--grana); }
+.t-card:hover:not(:disabled) { transform: translateY(-1px); }
+.t-body { flex: 1; display: flex; flex-direction: column; justify-content: space-between; gap: 6px; padding: 12px 14px 14px; }
+.t-name { font-size: 22px; font-weight: 800; letter-spacing: -0.02em; }
+.t-total { font-size: 26px; font-weight: 800; letter-spacing: -0.03em; color: var(--oro); }
+.t-meta { font-size: 13px; color: var(--muted); }
+.t-card.busy .t-meta { color: var(--on-dark-muted); }
+.toast-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; border-radius: var(--field-radius); background: var(--verde); color: #fff; font-size: 15px; }
+.move-box { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 2px dashed var(--soft); border-radius: var(--field-radius); }
+.pill-busy { border-color: var(--grana); color: var(--grana); }
+
+/* ---------- Ticket impreso ---------- */
+.print-area { display: none; }
+
+@media print {
+    body { background: #fff; }
+    body * { visibility: hidden; }
+    #blazor-error-ui { display: none !important; }
+    .print-area, .print-area * { visibility: visible; }
+    .print-area { display: block; position: absolute; left: 0; top: 0; }
+}
+
+.ticket { color: #000; background: #fff; font-family: var(--mono); font-size: 12px; line-height: 1.35; padding: 3mm 3mm 6mm; box-sizing: border-box; }
+/* Ancho imprimible real: 80 mm de papel → 72 mm (p. ej. Epson TM-T88V); 58 mm → 48 mm */
+.ticket.w80 { width: 72mm; }
+.ticket.w58 { width: 48mm; font-size: 10.5px; padding: 2mm 1mm 5mm; }
+.ticket-logo { display: block; margin: 0 auto 2mm; max-width: 70%; max-height: 22mm; filter: grayscale(1) contrast(1.6); }
+.ticket .t-center { text-align: center; }
+.ticket .t-strong { font-weight: 700; }
+.ticket .t-copy { margin-top: 1mm; font-size: 1.1em; }
+.ticket .t-rule { border-top: 1px dashed #000; margin: 2mm 0; }
+.ticket .t-row { display: flex; justify-content: space-between; gap: 2mm; }
+.ticket .t-item { font-weight: 700; }
+.ticket .t-sub { font-size: 0.92em; }
+.ticket .t-total { font-size: 1.35em; font-weight: 700; margin: 1mm 0; }
+
 /* ---------- Error de Blazor ---------- */
 #blazor-error-ui { display: none; position: fixed; bottom: 0; left: 0; right: 0; z-index: 1000; padding: 12px 20px; background: var(--grana); color: #fff; box-shadow: 0 -2px 8px rgba(0,0,0,.2); }
 #blazor-error-ui a { color: #fff; font-weight: 700; margin-left: 12px; }

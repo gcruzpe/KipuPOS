@@ -25,6 +25,8 @@ public sealed class PosContext(ApiClient api, AuthSession auth)
 
     public void SetBranding(TenantBrandingDto? branding) => Branding = branding;
 
+    public async Task ReloadBranchesAsync() => Branches = await api.GetAsync<List<BranchDto>>("api/branches") ?? [];
+
     public string? BranchName(Guid? id) => id is null ? null : Branches.FirstOrDefault(b => b.Id == id)?.Name;
 
     // Hora local del negocio (la API guarda todo en UTC)

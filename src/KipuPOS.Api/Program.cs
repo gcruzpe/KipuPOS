@@ -36,6 +36,7 @@ builder.Services.AddScoped<DocumentNumberService>();
 builder.Services.AddScoped<SaleService>();
 builder.Services.AddScoped<CashSessionService>();
 builder.Services.AddScoped<MenuService>();
+builder.Services.AddScoped<TableOrderService>();
 
 var jwt = builder.Configuration.GetSection("Jwt").Get<JwtOptions>()!;
 if (jwt.Key.Length < 32) throw new InvalidOperationException("Jwt:Key debe tener al menos 32 caracteres.");
@@ -111,6 +112,7 @@ app.MapCatalog();
 app.MapSessions();
 app.MapMenu();
 app.MapSales();
+app.MapTables();
 app.MapUsers();
 app.MapTenantAdmin();
 app.MapBranding();

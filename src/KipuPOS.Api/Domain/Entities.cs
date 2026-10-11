@@ -140,8 +140,64 @@ public class Sale : ITenantEntity
     public Guid? VoidedById { get; set; }
     public User? VoidedBy { get; set; }
     public DateTime? VoidedAtUtc { get; set; }
+    public Guid? TableOrderId { get; set; } // cuenta de mesa de la que salió (null en ventas de mostrador)
+    public TableOrder? TableOrder { get; set; }
+    public string? TableName { get; set; }  // snapshot: la mesa donde se cobró (la cuenta puede moverse después)
     public List<SaleLine> Lines { get; set; } = [];
+    public List<SalePayment> Payments { get; set; } = [];
     [Timestamp] public byte[] RowVersion { get; set; } = [];
+}
+
+// Partes del pago de una venta (pago mixto). Siempre hay al menos una y suman Sale.Total.
+public class SalePayment : ITenantEntity
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid SaleId { get; set; }
+    public PaymentMethod Method { get; set; }
+    public decimal Amount { get; set; }
+}
+
+public class DiningTable : ITenantEntity
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid BranchId { get; set; }
+    public string Name { get; set; } = "";
+    public int SortOrder { get; set; }
+    public bool Active { get; set; } = true;
+}
+
+public enum TableOrderStatus { Open = 1, Closed = 2, Cancelled = 3 }
+
+// Cuenta abierta de una mesa: se van agregando productos y se cobra al final (en una o varias ventas)
+public class TableOrder : ITenantEntity
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid BranchId { get; set; }
+    public Guid TableId { get; set; }
+    public DiningTable? Table { get; set; }
+    public Guid OpenedById { get; set; }
+    public User? OpenedBy { get; set; }
+    public DateTime OpenedAtUtc { get; set; }
+    public DateTime? ClosedAtUtc { get; set; }
+    public TableOrderStatus Status { get; set; } = TableOrderStatus.Open;
+    public List<TableOrderLine> Lines { get; set; } = [];
+    [Timestamp] public byte[] RowVersion { get; set; } = [];
+}
+
+// El precio no se guarda aquí: se toma del servidor al cobrar (igual que en una venta normal)
+public class TableOrderLine : ITenantEntity
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid OrderId { get; set; }
+    public int Position { get; set; }
+    public Guid ProductId { get; set; }
+    public Product? Product { get; set; }
+    public int Quantity { get; set; }
+    public string? Note { get; set; }
 }
 
 public class SaleLine : ITenantEntity

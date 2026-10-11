@@ -5,6 +5,9 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
+    <!-- Puertos fijos del servidor de desarrollo aunque Visual Studio no aplique el perfil de launchSettings
+         (sin esto usa el 5000 y choca con la API). La API solo acepta este origen en Cors:Origins. -->
+    <_RunExtraArguments>--urls &quot;https://localhost:7200;http://localhost:5200&quot;</_RunExtraArguments>
   </PropertyGroup>
 
   <ItemGroup>

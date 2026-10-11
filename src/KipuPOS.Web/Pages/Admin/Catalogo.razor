@@ -1,0 +1,334 @@
+@page "/admin/catalogo"
+@inherits SecurePage
+@inject PosContext Ctx
+
+<PageTitle>Catálogo · KipuPOS</PageTitle>
+
+@if (!Allowed) { return; }
+
+<AdminShell Brand="@Ctx.Branding">
+    <div style="display: flex; flex-direction: column; gap: 6px">
+        <h1>Catálogo</h1>
+        <p class="muted" style="margin: 0">Precios <strong>sin IGV</strong>; el IGV (@IgvText) se suma en el ticket. Los platos de menú se venden solo si están en el menú del día.</p>
+    </div>
+
+    @if (loadError is not null)
+    {
+        <div class="alert" role="alert">@loadError</div>
+    }
+    else if (loading)
+    {
+        <p class="muted">Cargando catálogo…</p>
+    }
+    else
+    {
+        <div class="cols">
+            <section class="col-main">
+                <nav aria-label="Categorías" class="pill-row">
+                    @foreach (var c in categories)
+                    {
+                        <button type="button" class="pill" aria-pressed="@(c.Id == selectedCategory ? "true" : "false")"
+                                @onclick="() => SelectCategory(c.Id)">@c.Name@(c.Active ? "" : " (inactiva)")</button>
+                    }
+                    <button type="button" class="pill" style="border-style: dashed" @onclick="NewCategory">+ Categoría</button>
+                </nav>
+
+                @if (SelectedCategory is { } cat)
+                {
+                    <div class="panel">
+                        <div class="panel-head">
+                            <h2>@cat.Name</h2>
+                            <div class="seg">
+                                <button type="button" class="btn btn-outline btn-sm" @onclick="() => EditCategory(cat)">Editar categoría</button>
+                                <button type="button" class="btn btn-dark btn-sm" @onclick="NewProduct">+ Producto</button>
+                            </div>
+                        </div>
+                        <div class="tejido-2" aria-hidden="true"></div>
+                        <div class="table-wrap">
+                            <table class="k-table" style="min-width: 560px">
+                                <thead>
+                                    <tr>
+                                        <th scope="col">Producto</th>
+                                        <th scope="col" class="num">Sin IGV</th>
+                                        <th scope="col" class="num">Con IGV</th>
+                                        <th scope="col">Tipo</th>
+                                        <th scope="col">Estado</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @{ var list = products.Where(p => p.CategoryId == cat.Id).OrderBy(p => p.Name).ToList(); }
+                                    @if (list.Count == 0)
+                                    {
+                                        <tr class="empty-row"><td colspan="5">Aún no hay productos en esta categoría.</td></tr>
+                                    }
+                                    @foreach (var p in list)
+                                    {
+                                        <tr class="clickable @(editingProductId == p.Id ? "selected" : "")" @onclick="() => EditProduct(p)">
+                                            <td style="font-weight: 800">@p.Name</td>
+                                            <td class="num">@Fmt.Money(p.Price)</td>
+                                            <td class="num muted">@Fmt.Money(WithIgv(p.Price))</td>
+                                            <td>@(p.IsMenuItem ? "Plato de menú" : "Carta")</td>
+                                            <td><span class="tag @(p.Active ? "tag-ok" : "tag-sold")">@(p.Active ? "activo" : "inactivo")</span></td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    <div class="alert soft">Crea la primera categoría (por ejemplo «Cafés» o «Postres») para empezar a cargar la carta.</div>
+                }
+            </section>
+
+            <aside class="col-side">
+                @if (mode == Mode.Category)
+                {
+                    <form class="panel" @onsubmit="SaveCategoryAsync" @onsubmit:preventDefault>
+                        <div class="panel-head"><h2>@(catForm.Id is null ? "Nueva categoría" : "Editar categoría")</h2></div>
+                        <div class="tejido-2" aria-hidden="true"></div>
+                        <div class="panel-body">
+                            <div class="field">
+                                <label for="cname">Nombre</label>
+                                <input id="cname" class="input input-sm" maxlength="80" @bind="catForm.Name" />
+                            </div>
+                            <div class="field">
+                                <label for="corder">Orden en la caja</label>
+                                <input id="corder" class="input input-sm" type="number" min="0" max="999" @bind="catForm.SortOrder" />
+                                <span class="hint">Las categorías con número menor aparecen primero.</span>
+                            </div>
+                            @if (catForm.Id is not null)
+                            {
+                                <label class="check"><input type="checkbox" @bind="catForm.Active" /> Activa (visible en la caja)</label>
+                            }
+                            @if (formError is not null)
+                            {
+                                <div class="alert" role="alert">@formError</div>
+                            }
+                            <div class="seg">
+                                <button type="submit" class="btn btn-primary" disabled="@busy">@(busy ? "Guardando…" : "Guardar")</button>
+                                <button type="button" class="btn btn-outline" @onclick="CloseForm">Cancelar</button>
+                            </div>
+                        </div>
+                    </form>
+                }
+                else if (mode == Mode.Product)
+                {
+                    <form class="panel" @onsubmit="SaveProductAsync" @onsubmit:preventDefault>
+                        <div class="panel-head"><h2>@(prodForm.Id is null ? "Nuevo producto" : "Editar producto")</h2></div>
+                        <div class="tejido-2" aria-hidden="true"></div>
+                        <div class="panel-body">
+                            <div class="field">
+                                <label for="pname">Nombre</label>
+                                <input id="pname" class="input input-sm" maxlength="120" @bind="prodForm.Name" />
+                            </div>
+                            <div class="field">
+                                <label for="pcat">Categoría</label>
+                                <select id="pcat" class="select" @bind="prodForm.CategoryId">
+                                    @foreach (var c in categories)
+                                    {
+                                        <option value="@c.Id">@c.Name</option>
+                                    }
+                                </select>
+                            </div>
+                            <div class="field">
+                                <label for="pprice">Precio sin IGV</label>
+                                <div class="money-input" style="height: 50px">
+                                    <span>S/</span>
+                                    <input id="pprice" type="text" inputmode="decimal" style="font-size: 20px" @bind="prodForm.PriceText" @bind:event="oninput" />
+                                </div>
+                                <span class="hint">
+                                    @(Fmt.TryParseMoney(prodForm.PriceText, out var pv) ? $"El cliente paga {Fmt.Money(WithIgv(pv))} con IGV." : "Ejemplo: 8.50 (con IGV, S/ 10.03).")
+                                </span>
+                            </div>
+                            <label class="check"><input type="checkbox" @bind="prodForm.IsMenuItem" /> Plato de menú del día</label>
+                            <label class="check"><input type="checkbox" @bind="prodForm.Active" /> Activo (a la venta)</label>
+                            @if (formError is not null)
+                            {
+                                <div class="alert" role="alert">@formError</div>
+                            }
+                            <div class="seg">
+                                <button type="submit" class="btn btn-primary" disabled="@busy">@(busy ? "Guardando…" : "Guardar")</button>
+                                <button type="button" class="btn btn-outline" @onclick="CloseForm">Cancelar</button>
+                            </div>
+                        </div>
+                    </form>
+                }
+                else
+                {
+                    <div class="alert soft">Toca un producto para editarlo, o usa «+ Producto» para agregar uno.</div>
+                    @if (toast is not null)
+                    {
+                        <p class="toast" role="status" style="margin-top: 12px">@toast</p>
+                    }
+                }
+            </aside>
+        </div>
+    }
+</AdminShell>
+
+@code {
+    private enum Mode { None, Category, Product }
+
+    private sealed class CategoryForm
+    {
+        public Guid? Id { get; set; }
+        public string Name { get; set; } = "";
+        public int SortOrder { get; set; }
+        public bool Active { get; set; } = true;
+    }
+
+    private sealed class ProductForm
+    {
+        public Guid? Id { get; set; }
+        public Guid CategoryId { get; set; }
+        public string Name { get; set; } = "";
+        public string PriceText { get; set; } = "";
+        public bool IsMenuItem { get; set; }
+        public bool Active { get; set; } = true;
+    }
+
+    protected override IReadOnlyCollection<string> AllowedRoles => [Roles.Admin];
+
+    private bool loading = true, busy;
+    private string? loadError, formError, toast;
+    private List<CategoryDto> categories = [];
+    private List<ProductDto> products = [];
+    private Guid selectedCategory;
+    private Mode mode;
+    private CategoryForm catForm = new();
+    private ProductForm prodForm = new();
+    private Guid? editingProductId;
+
+    private CategoryDto? SelectedCategory => categories.FirstOrDefault(c => c.Id == selectedCategory);
+    private string IgvText => (Ctx.IgvRate * 100).ToString("0.##") + "%";
+    private decimal WithIgv(decimal price) => price + Fmt.Round(price * Ctx.IgvRate);
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Allowed) return;
+        try
+        {
+            await Ctx.EnsureLoadedAsync();
+            await LoadAsync();
+        }
+        catch (ApiException ex)
+        {
+            loadError = ex.Message;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        categories = await Api.GetAsync<List<CategoryDto>>("api/categories") ?? [];
+        products = await Api.GetAsync<List<ProductDto>>("api/products") ?? [];
+        if (!categories.Any(c => c.Id == selectedCategory)) selectedCategory = categories.FirstOrDefault()?.Id ?? Guid.Empty;
+    }
+
+    private void SelectCategory(Guid id)
+    {
+        selectedCategory = id;
+        if (mode == Mode.Product) CloseForm();
+    }
+
+    private void CloseForm()
+    {
+        mode = Mode.None;
+        editingProductId = null;
+        formError = null;
+    }
+
+    private void NewCategory()
+    {
+        catForm = new CategoryForm { SortOrder = (categories.Count == 0 ? 0 : categories.Max(c => c.SortOrder)) + 1 };
+        mode = Mode.Category;
+        formError = toast = null;
+        editingProductId = null;
+    }
+
+    private void EditCategory(CategoryDto c)
+    {
+        catForm = new CategoryForm { Id = c.Id, Name = c.Name, SortOrder = c.SortOrder, Active = c.Active };
+        mode = Mode.Category;
+        formError = toast = null;
+        editingProductId = null;
+    }
+
+    private void NewProduct()
+    {
+        prodForm = new ProductForm { CategoryId = selectedCategory };
+        mode = Mode.Product;
+        formError = toast = null;
+        editingProductId = null;
+    }
+
+    private void EditProduct(ProductDto p)
+    {
+        prodForm = new ProductForm
+        {
+            Id = p.Id, CategoryId = p.CategoryId, Name = p.Name, IsMenuItem = p.IsMenuItem, Active = p.Active,
+            PriceText = p.Price.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)
+        };
+        mode = Mode.Product;
+        formError = toast = null;
+        editingProductId = p.Id;
+    }
+
+    private async Task SaveCategoryAsync()
+    {
+        formError = null;
+        if (string.IsNullOrWhiteSpace(catForm.Name)) { formError = "Escribe el nombre de la categoría."; return; }
+        busy = true;
+        try
+        {
+            var body = new CategoryUpsert(catForm.Name.Trim(), catForm.SortOrder, catForm.Active);
+            var saved = catForm.Id is { } id
+                ? await Api.PutAsync<CategoryDto>($"api/categories/{id}", body)
+                : await Api.PostAsync<CategoryDto>("api/categories", body);
+            await LoadAsync();
+            if (saved is not null) selectedCategory = saved.Id;
+            toast = $"Categoría «{saved?.Name}» guardada.";
+            CloseForm();
+        }
+        catch (ApiException ex)
+        {
+            formError = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task SaveProductAsync()
+    {
+        formError = null;
+        if (string.IsNullOrWhiteSpace(prodForm.Name)) { formError = "Escribe el nombre del producto."; return; }
+        if (!Fmt.TryParseMoney(prodForm.PriceText, out var price) || price < 0) { formError = "Escribe un precio válido, por ejemplo 8.50"; return; }
+        busy = true;
+        try
+        {
+            var body = new ProductUpsert(prodForm.CategoryId, prodForm.Name.Trim(), Fmt.Round(price), prodForm.Active, prodForm.IsMenuItem);
+            var saved = prodForm.Id is { } id
+                ? await Api.PutAsync<ProductDto>($"api/products/{id}", body)
+                : await Api.PostAsync<ProductDto>("api/products", body);
+            await LoadAsync();
+            if (saved is not null) selectedCategory = saved.CategoryId;
+            toast = $"«{saved?.Name}» guardado.";
+            CloseForm();
+        }
+        catch (ApiException ex)
+        {
+            formError = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+}

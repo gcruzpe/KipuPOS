@@ -1,0 +1,226 @@
+@page "/admin/mesas"
+@inherits SecurePage
+@inject PosContext Ctx
+
+<PageTitle>Mesas · KipuPOS</PageTitle>
+
+@if (!Allowed) { return; }
+
+<AdminShell Brand="@Ctx.Branding">
+    <div class="page-title" style="align-items: flex-end">
+        <div style="display: flex; flex-direction: column; gap: 6px">
+            <h1>Mesas</h1>
+            <p class="muted" style="margin: 0">Las mesas aparecen en la caja para abrir cuentas y cobrar al final.</p>
+        </div>
+        <div class="field">
+            <label for="suc" style="font-size: 14px">Sucursal</label>
+            <select id="suc" class="select" value="@branchId" @onchange="OnBranchChanged">
+                @foreach (var b in Ctx.Branches.Where(b => b.Active))
+                {
+                    <option value="@b.Id">@b.Name</option>
+                }
+            </select>
+        </div>
+    </div>
+
+    @if (loadError is not null)
+    {
+        <div class="alert" role="alert">@loadError</div>
+    }
+    else if (loading)
+    {
+        <p class="muted">Cargando mesas…</p>
+    }
+    else
+    {
+        <div class="cols">
+            <section class="col-main">
+                <div class="toolbar">
+                    <button type="button" class="btn btn-dark" @onclick="New">+ Nueva mesa</button>
+                    @if (BranchTables.Count == 0)
+                    {
+                        <label class="sr-only" for="qty">Cantidad de mesas</label>
+                        <input id="qty" class="select" type="number" min="1" max="60" style="width: 90px" @bind="quickCount" />
+                        <button type="button" class="btn btn-outline" disabled="@busy" @onclick="CreateManyAsync">Crear @quickCount mesas (Mesa 1…@quickCount)</button>
+                    }
+                </div>
+                <div class="panel table-wrap">
+                    <table class="k-table" style="min-width: 420px">
+                        <thead><tr><th scope="col">Mesa</th><th scope="col" class="num">Orden</th><th scope="col">Estado</th></tr></thead>
+                        <tbody>
+                            @if (BranchTables.Count == 0)
+                            {
+                                <tr class="empty-row"><td colspan="3">Esta sucursal aún no tiene mesas.</td></tr>
+                            }
+                            @foreach (var t in BranchTables)
+                            {
+                                <tr class="clickable @(form.Id == t.Id ? "selected" : "")" @onclick="() => Edit(t)">
+                                    <td style="font-weight: 800">@t.Name</td>
+                                    <td class="num">@t.SortOrder</td>
+                                    <td><span class="tag @(t.Active ? "tag-ok" : "tag-sold")">@(t.Active ? "activa" : "inactiva")</span></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <aside class="col-side">
+                @if (editing)
+                {
+                    <form class="panel" @onsubmit="SaveAsync" @onsubmit:preventDefault>
+                        <div class="panel-head"><h2>@(form.Id is null ? "Nueva mesa" : "Editar mesa")</h2></div>
+                        <div class="tejido-2" aria-hidden="true"></div>
+                        <div class="panel-body">
+                            <div class="field">
+                                <label for="tname">Nombre</label>
+                                <input id="tname" class="input input-sm" maxlength="40" placeholder="ej. Mesa 7 o Terraza 1" @bind="form.Name" />
+                            </div>
+                            <div class="field">
+                                <label for="torder">Orden en la caja</label>
+                                <input id="torder" class="input input-sm" type="number" min="0" max="999" @bind="form.SortOrder" />
+                            </div>
+                            @if (form.Id is not null)
+                            {
+                                <label class="check"><input type="checkbox" @bind="form.Active" /> Activa</label>
+                            }
+                            @if (formError is not null)
+                            {
+                                <div class="alert" role="alert">@formError</div>
+                            }
+                            <div class="seg">
+                                <button type="submit" class="btn btn-primary" disabled="@busy">@(busy ? "Guardando…" : "Guardar")</button>
+                                <button type="button" class="btn btn-outline" @onclick="Close">Cancelar</button>
+                            </div>
+                        </div>
+                    </form>
+                }
+                else
+                {
+                    <div class="alert soft">Toca una mesa para renombrarla o desactivarla.</div>
+                    @if (toast is not null)
+                    {
+                        <p class="toast" role="status" style="margin-top: 12px">@toast</p>
+                    }
+                }
+            </aside>
+        </div>
+    }
+</AdminShell>
+
+@code {
+    private sealed class TableForm
+    {
+        public Guid? Id { get; set; }
+        public string Name { get; set; } = "";
+        public int SortOrder { get; set; }
+        public bool Active { get; set; } = true;
+    }
+
+    protected override IReadOnlyCollection<string> AllowedRoles => [Roles.Admin];
+
+    private bool loading = true, busy, editing;
+    private string? loadError, formError, toast;
+    private List<DiningTableDto> tables = [];
+    private Guid branchId;
+    private TableForm form = new();
+    private int quickCount = 6;
+
+    private List<DiningTableDto> BranchTables => tables.Where(t => t.BranchId == branchId).OrderBy(t => t.SortOrder).ThenBy(t => t.Name).ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Allowed) return;
+        try
+        {
+            await Ctx.EnsureLoadedAsync();
+            var active = Ctx.Branches.Where(b => b.Active).ToList();
+            branchId = active.FirstOrDefault(b => b.Id == User.BranchId)?.Id ?? active.FirstOrDefault()?.Id ?? Guid.Empty;
+            await LoadAsync();
+        }
+        catch (ApiException ex)
+        {
+            loadError = ex.Message;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task LoadAsync() => tables = await Api.GetAsync<List<DiningTableDto>>("api/tables") ?? [];
+
+    private void OnBranchChanged(ChangeEventArgs e)
+    {
+        if (Guid.TryParse(e.Value?.ToString(), out var id)) { branchId = id; Close(); }
+    }
+
+    private void New()
+    {
+        var next = BranchTables.Count == 0 ? 1 : BranchTables.Max(t => t.SortOrder) + 1;
+        form = new TableForm { Name = $"Mesa {next}", SortOrder = next };
+        editing = true;
+        formError = toast = null;
+    }
+
+    private void Edit(DiningTableDto t)
+    {
+        form = new TableForm { Id = t.Id, Name = t.Name, SortOrder = t.SortOrder, Active = t.Active };
+        editing = true;
+        formError = toast = null;
+    }
+
+    private void Close()
+    {
+        editing = false;
+        form = new TableForm();
+        formError = null;
+    }
+
+    private async Task SaveAsync()
+    {
+        formError = null;
+        if (string.IsNullOrWhiteSpace(form.Name)) { formError = "Escribe el nombre de la mesa."; return; }
+        busy = true;
+        try
+        {
+            var body = new DiningTableUpsert(branchId, form.Name.Trim(), form.SortOrder, form.Active);
+            var saved = form.Id is { } id
+                ? await Api.PutAsync<DiningTableDto>($"api/tables/{id}", body)
+                : await Api.PostAsync<DiningTableDto>("api/tables", body);
+            toast = $"«{saved?.Name}» guardada.";
+            Close();
+            await LoadAsync();
+        }
+        catch (ApiException ex)
+        {
+            formError = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task CreateManyAsync()
+    {
+        var n = Math.Clamp(quickCount, 1, 60);
+        busy = true;
+        toast = formError = null;
+        try
+        {
+            for (var i = 1; i <= n; i++)
+                await Api.PostAsync<DiningTableDto>("api/tables", new DiningTableUpsert(branchId, $"Mesa {i}", i));
+            toast = $"{n} mesas creadas.";
+        }
+        catch (ApiException ex)
+        {
+            loadError = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+            await LoadAsync();
+        }
+    }
+}
