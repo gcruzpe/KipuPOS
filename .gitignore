@@ -3,3 +3,6 @@ obj/
 .vs/
 *.user
 appsettings.Production.json
+
+# Python
+__pycache__/

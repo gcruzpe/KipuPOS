@@ -1,0 +1,269 @@
+@page "/admin/menu"
+@inherits SecurePage
+@inject PosContext Ctx
+
+<PageTitle>Menú del día · KipuPOS</PageTitle>
+
+@if (!Allowed) { return; }
+
+<AdminShell Brand="@Ctx.Branding">
+    <div class="page-title" style="align-items: flex-end">
+        <div style="display: flex; flex-direction: column; gap: 6px">
+            <h1>Menú del día</h1>
+            <p class="muted" style="margin: 0">Solo se venden los platos de menú que estén aquí, al precio del día. Precios sin IGV.</p>
+        </div>
+        <div class="toolbar">
+            <div class="field">
+                <label for="suc" style="font-size: 14px">Sucursal</label>
+                <select id="suc" class="select" value="@branchId" @onchange="OnBranchChanged">
+                    @foreach (var b in Ctx.Branches.Where(b => b.Active))
+                    {
+                        <option value="@b.Id">@b.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="field">
+                <label for="fecha" style="font-size: 14px">Fecha</label>
+                <input id="fecha" class="select mono" type="date" value="@date.ToString("yyyy-MM-dd")" @onchange="OnDateChanged" />
+            </div>
+        </div>
+    </div>
+
+    @if (loadError is not null)
+    {
+        <div class="alert" role="alert">@loadError</div>
+    }
+    else if (loading)
+    {
+        <p class="muted">Cargando menú…</p>
+    }
+    else
+    {
+        <div class="toolbar">
+            <button type="button" class="btn btn-outline" disabled="@busy" @onclick="CopyFromPreviousAsync">Copiar del @Fmt.LongDate(date.AddDays(-1))</button>
+            @if (Available.Any())
+            {
+                <label for="add" class="sr-only">Plato para agregar</label>
+                <select id="add" class="select" @bind="toAdd">
+                    <option value="">Elegir plato…</option>
+                    @foreach (var p in Available)
+                    {
+                        <option value="@p.Id">@p.Name</option>
+                    }
+                </select>
+                <button type="button" class="btn btn-dark" disabled="@(string.IsNullOrEmpty(toAdd))" @onclick="AddEntry">+ Agregar plato</button>
+            }
+            else if (menuProducts.Count == 0)
+            {
+                <span class="muted" style="font-size: 14px">No hay productos marcados como plato de menú en el catálogo.</span>
+            }
+        </div>
+
+        <div class="panel">
+            <div class="panel-head">
+                <h2>@Capitalize(Fmt.LongDate(date))</h2>
+                <span class="muted" style="font-size: 14px">@rows.Count platos · @rows.Count(r => r.SoldOut) agotados</span>
+            </div>
+            <div class="tejido-2" aria-hidden="true"></div>
+            @if (rows.Count == 0)
+            {
+                <p class="empty">No hay menú para este día. Agrega platos o cópialo del día anterior.</p>
+            }
+            else
+            {
+                <div class="table-wrap">
+                    <table class="k-table" style="min-width: 560px">
+                        <thead>
+                            <tr>
+                                <th scope="col">Plato</th>
+                                <th scope="col" style="width: 170px">Precio del día</th>
+                                <th scope="col" style="width: 150px">Estado</th>
+                                <th scope="col" style="width: 60px"><span class="sr-only">Acciones</span></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var r in rows)
+                            {
+                                <tr>
+                                    <td style="font-weight: 800">@r.Name</td>
+                                    <td>
+                                        <div class="money-input" style="height: 46px; max-width: 140px">
+                                            <span style="font-size: 15px">S/</span>
+                                            <input type="text" inputmode="decimal" style="font-size: 16px" aria-label="Precio de @r.Name"
+                                                   @bind="r.PriceText" @bind:after="MarkDirty" />
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <button type="button" class="pill @(r.SoldOut ? "" : "go")" style="min-height: 38px; font-size: 14px; padding: 0 14px"
+                                                aria-pressed="true" @onclick="() => { r.SoldOut = !r.SoldOut; MarkDirty(); }">
+                                            @(r.SoldOut ? "agotado" : "disponible")
+                                        </button>
+                                    </td>
+                                    <td>
+                                        <button type="button" class="btn-round" style="border-color: var(--soft)" aria-label="Quitar @r.Name del menú"
+                                                @onclick="() => { rows.Remove(r); MarkDirty(); }">×</button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+
+        @if (actionError is not null)
+        {
+            <div class="alert" role="alert">@actionError</div>
+        }
+        @if (toast is not null)
+        {
+            <p class="toast" role="status" style="align-self: flex-end">@toast</p>
+        }
+        <div class="toolbar" style="justify-content: flex-end">
+            <button type="button" class="btn btn-outline" disabled="@(!dirty || busy)" @onclick="LoadMenuAsync">Descartar cambios</button>
+            <button type="button" class="btn btn-primary" disabled="@(!dirty || busy)" @onclick="SaveAsync">@(busy ? "Guardando…" : "Guardar menú")</button>
+        </div>
+    }
+</AdminShell>
+
+@code {
+    private sealed class Row
+    {
+        public Guid ProductId { get; init; }
+        public string Name { get; init; } = "";
+        public string PriceText { get; set; } = "";
+        public bool SoldOut { get; set; }
+    }
+
+    protected override IReadOnlyCollection<string> AllowedRoles => [Roles.Admin];
+
+    private bool loading = true, busy, dirty;
+    private string? loadError, actionError, toast;
+    private Guid branchId;
+    private DateOnly date;
+    private List<ProductDto> menuProducts = [];
+    private List<Row> rows = [];
+    private string toAdd = "";
+
+    private IEnumerable<ProductDto> Available => menuProducts.Where(p => rows.All(r => r.ProductId != p.Id));
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Allowed) return;
+        try
+        {
+            await Ctx.EnsureLoadedAsync();
+            date = Ctx.Today;
+            var active = Ctx.Branches.Where(b => b.Active).ToList();
+            branchId = active.FirstOrDefault(b => b.Id == User.BranchId)?.Id ?? active.FirstOrDefault()?.Id ?? Guid.Empty;
+            menuProducts = (await Api.GetAsync<List<ProductDto>>("api/products?onlyActive=true") ?? []).Where(p => p.IsMenuItem).ToList();
+            await LoadMenuAsync();
+        }
+        catch (ApiException ex)
+        {
+            loadError = ex.Message;
+            loading = false;
+        }
+    }
+
+    private string MenuUrl(DateOnly d) => $"api/menu/{d:yyyy-MM-dd}?branchId={branchId}";
+
+    private async Task LoadMenuAsync()
+    {
+        loading = true;
+        actionError = null;
+        try
+        {
+            var menu = await Api.GetAsync<DailyMenuDto>(MenuUrl(date));
+            SetRows(menu);
+        }
+        catch (ApiException ex)
+        {
+            actionError = ex.Message;
+            rows = [];
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private void SetRows(DailyMenuDto? menu)
+    {
+        rows = (menu?.Entries ?? []).Select(e => new Row { ProductId = e.ProductId, Name = e.Name, PriceText = e.Price.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture), SoldOut = e.SoldOut }).ToList();
+        dirty = false;
+    }
+
+    private void MarkDirty()
+    {
+        dirty = true;
+        toast = null;
+    }
+
+    private async Task OnBranchChanged(ChangeEventArgs e)
+    {
+        if (Guid.TryParse(e.Value?.ToString(), out var id)) { branchId = id; await LoadMenuAsync(); }
+    }
+
+    private async Task OnDateChanged(ChangeEventArgs e)
+    {
+        if (DateOnly.TryParse(e.Value?.ToString(), System.Globalization.CultureInfo.InvariantCulture, out var d)) { date = d; await LoadMenuAsync(); }
+    }
+
+    private void AddEntry()
+    {
+        var p = menuProducts.FirstOrDefault(x => x.Id.ToString() == toAdd);
+        if (p is null) return;
+        rows.Add(new Row { ProductId = p.Id, Name = p.Name, PriceText = p.Price.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) });
+        toAdd = "";
+        MarkDirty();
+    }
+
+    private async Task SaveAsync()
+    {
+        actionError = null;
+        var entries = new List<MenuEntryUpsert>();
+        foreach (var r in rows)
+        {
+            if (!Fmt.TryParseMoney(r.PriceText, out var price) || price < 0) { actionError = $"Revisa el precio de «{r.Name}»."; return; }
+            entries.Add(new MenuEntryUpsert(r.ProductId, Fmt.Round(price), r.SoldOut));
+        }
+
+        busy = true;
+        try
+        {
+            SetRows(await Api.PutAsync<DailyMenuDto>(MenuUrl(date), new SetMenuRequest(entries)));
+            toast = "Menú guardado.";
+        }
+        catch (ApiException ex)
+        {
+            actionError = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task CopyFromPreviousAsync()
+    {
+        actionError = null;
+        busy = true;
+        try
+        {
+            var url = $"api/menu/{date:yyyy-MM-dd}/copy-from/{date.AddDays(-1):yyyy-MM-dd}?branchId={branchId}";
+            SetRows(await Api.PostAsync<DailyMenuDto>(url, null));
+            toast = "Menú copiado del día anterior.";
+        }
+        catch (ApiException ex)
+        {
+            actionError = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private static string Capitalize(string s) => s.Length == 0 ? s : char.ToUpperInvariant(s[0]) + s[1..];
+}

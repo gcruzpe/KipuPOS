@@ -1,0 +1,46 @@
+@inject AuthSession Auth
+@inject NavigationManager Nav
+
+<div class="admin">
+    <nav class="admin-nav" aria-label="Administración">
+        <div class="admin-nav-inner">
+            @if (Brand is not null)
+            {
+                <div class="admin-brand"><TenantMark Branding="Brand" OnDark="true" Height="64" /></div>
+            }
+            else
+            {
+                <Logo Size="30" WordSize="22" />
+            }
+            <div class="who">@Auth.Current?.TenantName · Administrador</div>
+            <div class="links">
+                <NavLink href="/admin/menu" ActiveClass="active">Menú del día</NavLink>
+                <NavLink href="/admin/negocio" ActiveClass="active">Mi negocio</NavLink>
+                <NavLink href="/caja" ActiveClass="active">Caja</NavLink>
+            </div>
+            <div class="bottom">
+                <a class="btn btn-on-dark" href="/cambiar-clave">Cambiar contraseña</a>
+                <button type="button" class="btn btn-on-dark" @onclick="LogoutAsync">Salir</button>
+                @if (Brand is not null)
+                {
+                    <div class="powered"><Logo Size="18" WordSize="14" /></div>
+                }
+            </div>
+        </div>
+        <div class="tejido-v" aria-hidden="true"></div>
+    </nav>
+    <main class="admin-main">
+        @ChildContent
+    </main>
+</div>
+
+@code {
+    [Parameter] public TenantBrandingDto? Brand { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    private async Task LogoutAsync()
+    {
+        await Auth.ClearAsync();
+        Nav.NavigateTo("/login");
+    }
+}

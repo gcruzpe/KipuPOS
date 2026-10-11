@@ -19,6 +19,17 @@ public class Tenant
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
+// Archivos de marca del negocio (logos). Tabla aparte para no cargar binarios cada vez que se lee el negocio.
+// No es ITenantEntity: el login la consulta sin token, así que cada endpoint la acota por TenantId a mano.
+public class TenantAsset
+{
+    public Guid TenantId { get; set; }
+    public string Kind { get; set; } = "";        // LogoKinds
+    public string ContentType { get; set; } = "";
+    public byte[] Data { get; set; } = [];
+    public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
+}
+
 public class Branch : ITenantEntity
 {
     public Guid Id { get; set; } = Guid.NewGuid();

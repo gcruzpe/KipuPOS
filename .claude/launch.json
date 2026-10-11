@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "kipupos-web",
+      "runtimeExecutable": "dotnet",
+      "runtimeArgs": ["run", "--project", "src/KipuPOS.Web", "--launch-profile", "https"],
+      "port": 7200,
+      "url": "https://localhost:7200"
+    }
+  ]
+}

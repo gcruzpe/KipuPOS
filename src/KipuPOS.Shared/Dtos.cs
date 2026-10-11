@@ -24,6 +24,17 @@ public record CreateTenantRequest(string Code, string Name, string? Ruc, string 
 public record CreateTenantResponse(TenantDto Tenant, BranchDto Branch, UserDto Admin, string TemporaryPassword);
 public record UpdateTenantRequest(string Name, string? Ruc, bool Active);
 
+// ---------- Marca del negocio (logos) ----------
+public static class LogoKinds
+{
+    public const string Light = "logo";        // para fondos claros (tinta oscura)
+    public const string Dark = "logo-dark";    // para fondos oscuros (tinta clara)
+    public static readonly string[] All = [Light, Dark];
+}
+// Las versiones cambian cada vez que se sube un logo: sirven para armar la URL (?v=) y evitar caché vieja
+public record TenantBrandingDto(string Code, string Name, long? LogoVersion, long? LogoDarkVersion);
+public record SetLogoRequest(string DataBase64); // PNG, JPG o WebP; máximo 512 KB
+
 // ---------- Sucursales ----------
 public record BranchDto(Guid Id, string Name, string? Address, bool Active);
 public record BranchUpsert(string Name, string? Address, bool Active = true);

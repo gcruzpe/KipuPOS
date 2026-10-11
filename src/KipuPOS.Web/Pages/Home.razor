@@ -1,0 +1,13 @@
+@page "/"
+@inject AuthSession Auth
+@inject NavigationManager Nav
+
+@code {
+    protected override void OnInitialized()
+    {
+        var s = Auth.Current;
+        if (s is null || !Auth.IsAuthenticated) Nav.NavigateTo("/login", replace: true);
+        else if (s.MustChangePassword) Nav.NavigateTo("/cambiar-clave", replace: true);
+        else Nav.NavigateTo(AppRoutes.HomeFor(s), replace: true);
+    }
+}

@@ -1,0 +1,210 @@
+@page "/plataforma"
+@inherits SecurePage
+
+<PageTitle>Plataforma · KipuPOS</PageTitle>
+
+@if (!Allowed) { return; }
+
+<div class="screen">
+    <PosHeader>
+        <Left><span class="tag-platform">PLATAFORMA</span></Left>
+        <ChildContent>
+            <span class="who">@User.Username</span>
+            <button type="button" class="btn btn-on-dark" @onclick="LogoutAsync">Salir</button>
+        </ChildContent>
+    </PosHeader>
+
+    <div class="pos-body">
+        <main class="pos-main">
+            <div class="page-title" style="align-items: flex-end">
+                <div style="display: flex; flex-direction: column; gap: 6px">
+                    <h1>Negocios</h1>
+                    <p class="muted" style="margin: 0">Cada negocio ve solo sus propios datos.</p>
+                </div>
+                <label for="buscar" class="sr-only">Buscar negocio</label>
+                <input id="buscar" class="select" type="search" placeholder="Buscar por código o nombre" style="width: 290px; max-width: 100%"
+                       @bind="search" @bind:event="oninput" />
+            </div>
+
+            @if (loadError is not null)
+            {
+                <div class="alert" role="alert">@loadError</div>
+            }
+            <div class="panel table-wrap">
+                <table class="k-table" style="min-width: 640px">
+                    <thead>
+                        <tr>
+                            <th scope="col">Código</th><th scope="col">Nombre</th><th scope="col">RUC</th>
+                            <th scope="col">Estado</th><th scope="col">Alta</th><th scope="col"><span class="sr-only">Acciones</span></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (tenants.Count == 0 && loadError is null)
+                        {
+                            <tr><td colspan="6" class="muted">@(loading ? "Cargando…" : "Aún no hay negocios. Crea el primero.")</td></tr>
+                        }
+                        @foreach (var t in Filtered)
+                        {
+                            <tr>
+                                <td class="mono" style="font-size: 14px">@t.Code</td>
+                                <td style="font-weight: 800">@t.Name</td>
+                                <td class="mono muted" style="font-size: 14px">@(t.Ruc ?? "—")</td>
+                                <td><span class="tag @(t.Active ? "tag-ok" : "tag-bad")">@(t.Active ? "activo" : "suspendido")</span></td>
+                                <td class="mono muted" style="font-size: 14px">@t.CreatedAtUtc.ToString("dd/MM/yyyy")</td>
+                                <td style="text-align: right">
+                                    <button type="button" class="btn btn-outline" style="min-height: 40px" disabled="@busy" @onclick="() => ToggleActiveAsync(t)">
+                                        @(t.Active ? "Suspender" : "Reactivar")
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </main>
+
+        <aside class="pos-aside">
+            <form class="panel" @onsubmit="CreateAsync" @onsubmit:preventDefault>
+                <div class="panel-head"><h2>Nuevo negocio</h2></div>
+                <div class="tejido-2" aria-hidden="true"></div>
+                <div class="panel-body">
+                    <p class="muted" style="margin: 0; font-size: 14px">Se crea con una sucursal y un administrador con contraseña temporal.</p>
+                    <div class="field">
+                        <label for="code">Código de negocio</label>
+                        <input id="code" class="input input-sm code" placeholder="ej. cafe-centro" autocapitalize="none" spellcheck="false" @bind="form.Code" />
+                    </div>
+                    <div class="field">
+                        <label for="name">Nombre comercial</label>
+                        <input id="name" class="input input-sm" @bind="form.Name" />
+                    </div>
+                    <div class="field">
+                        <label for="ruc">RUC (opcional)</label>
+                        <input id="ruc" class="input input-sm code" inputmode="numeric" maxlength="11" @bind="form.Ruc" />
+                    </div>
+                    <div class="field">
+                        <label for="branch">Primera sucursal</label>
+                        <input id="branch" class="input input-sm" @bind="form.BranchName" />
+                    </div>
+                    <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px">
+                        <div class="field">
+                            <label for="adminu">Usuario admin</label>
+                            <input id="adminu" class="input input-sm" autocapitalize="none" @bind="form.AdminUsername" />
+                        </div>
+                        <div class="field">
+                            <label for="adminn">Nombre del admin</label>
+                            <input id="adminn" class="input input-sm" @bind="form.AdminFullName" />
+                        </div>
+                    </div>
+                    @if (actionError is not null)
+                    {
+                        <div class="alert" role="alert">@actionError</div>
+                    }
+                    <button type="submit" class="btn btn-primary btn-block" disabled="@busy">@(busy ? "Creando…" : "Crear negocio")</button>
+                    @if (created is not null)
+                    {
+                        <div class="alert" role="status" style="flex-direction: column; gap: 6px">
+                            <span>«@created.Tenant.Name» creado. Contraseña temporal de <strong>@created.Admin.Username</strong> (se muestra una sola vez):</span>
+                            <span class="mono" style="font-size: 18px; color: var(--oro); user-select: all">@created.TemporaryPassword</span>
+                        </div>
+                    }
+                </div>
+            </form>
+        </aside>
+    </div>
+</div>
+
+@code {
+    private sealed class NewTenantForm
+    {
+        public string Code { get; set; } = "";
+        public string Name { get; set; } = "";
+        public string? Ruc { get; set; }
+        public string BranchName { get; set; } = "Principal";
+        public string AdminUsername { get; set; } = "admin";
+        public string AdminFullName { get; set; } = "";
+    }
+
+    protected override IReadOnlyCollection<string> AllowedRoles => [Roles.Platform];
+
+    private bool loading = true, busy;
+    private string? loadError, actionError;
+    private List<TenantDto> tenants = [];
+    private string search = "";
+    private NewTenantForm form = new();
+    private CreateTenantResponse? created;
+
+    private IEnumerable<TenantDto> Filtered => string.IsNullOrWhiteSpace(search)
+        ? tenants
+        : tenants.Where(t => t.Code.Contains(search.Trim(), StringComparison.OrdinalIgnoreCase) || t.Name.Contains(search.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Allowed) return;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            tenants = await Api.GetAsync<List<TenantDto>>("api/platform/tenants") ?? [];
+            loadError = null;
+        }
+        catch (ApiException ex)
+        {
+            loadError = ex.Message;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task CreateAsync()
+    {
+        if (busy) return;
+        actionError = null;
+        created = null;
+        if (string.IsNullOrWhiteSpace(form.Code) || string.IsNullOrWhiteSpace(form.Name) || string.IsNullOrWhiteSpace(form.AdminUsername))
+        {
+            actionError = "Código, nombre y usuario admin son obligatorios.";
+            return;
+        }
+        busy = true;
+        try
+        {
+            created = await Api.PostAsync<CreateTenantResponse>("api/platform/tenants", new CreateTenantRequest(
+                form.Code.Trim(), form.Name.Trim(), string.IsNullOrWhiteSpace(form.Ruc) ? null : form.Ruc.Trim(),
+                form.BranchName.Trim(), form.AdminUsername.Trim(), string.IsNullOrWhiteSpace(form.AdminFullName) ? form.AdminUsername.Trim() : form.AdminFullName.Trim()));
+            form = new NewTenantForm();
+            await LoadAsync();
+        }
+        catch (ApiException ex)
+        {
+            actionError = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task ToggleActiveAsync(TenantDto t)
+    {
+        busy = true;
+        loadError = null;
+        try
+        {
+            await Api.PutAsync<TenantDto>($"api/platform/tenants/{t.Id}", new UpdateTenantRequest(t.Name, t.Ruc, !t.Active));
+            await LoadAsync();
+        }
+        catch (ApiException ex)
+        {
+            loadError = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+}

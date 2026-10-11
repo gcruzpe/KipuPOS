@@ -1,0 +1,30 @@
+@inject ApiClient Api
+
+@* Marca del negocio. Sobre fondo oscuro usa el logo para fondos oscuros; si solo hay el otro, lo pone sobre una placa clara.
+   Sin logos muestra el nombre. *@
+@if (Branding is { } b)
+{
+    var light = b.LogoVersion is { } lv ? Api.LogoUrl(b.Code, LogoKinds.Light, lv) : null;
+    var dark = b.LogoDarkVersion is { } dv ? Api.LogoUrl(b.Code, LogoKinds.Dark, dv) : null;
+    var direct = OnDark ? dark : light;
+    var plated = OnDark ? light : dark;
+
+    if (direct is not null)
+    {
+        <img class="tenant-logo" src="@direct" alt="@b.Name" style="height: @(Height)px" />
+    }
+    else if (plated is not null)
+    {
+        <span class="tenant-plate @(OnDark ? "" : "dark")"><img class="tenant-logo" src="@plated" alt="@b.Name" style="height: @(Height - 10)px" /></span>
+    }
+    else
+    {
+        <span class="tenant-name @(OnDark ? "on-dark" : "")" style="font-size: @(Math.Max(16, Height / 2))px">@b.Name</span>
+    }
+}
+
+@code {
+    [Parameter] public TenantBrandingDto? Branding { get; set; }
+    [Parameter] public bool OnDark { get; set; }
+    [Parameter] public int Height { get; set; } = 44;
+}

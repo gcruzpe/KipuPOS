@@ -451,6 +451,32 @@ namespace KipuPOS.Api.Migrations
                     b.ToTable("Tenants");
                 });
 
+            modelBuilder.Entity("KipuPOS.Api.Domain.TenantAsset", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Kind")
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("ContentType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<byte[]>("Data")
+                        .IsRequired()
+                        .HasColumnType("varbinary(max)");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("TenantId", "Kind");
+
+                    b.ToTable("TenantAssets");
+                });
+
             modelBuilder.Entity("KipuPOS.Api.Domain.User", b =>
                 {
                     b.Property<Guid>("Id")
@@ -690,6 +716,15 @@ namespace KipuPOS.Api.Migrations
                         .WithMany()
                         .HasForeignKey("TenantId")
                         .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("KipuPOS.Api.Domain.TenantAsset", b =>
+                {
+                    b.HasOne("KipuPOS.Api.Domain.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
 

@@ -16,6 +16,7 @@ public class AppDbContext : DbContext
     private Guid? CurrentTenantId => _tenant.TenantId;
 
     public DbSet<Tenant> Tenants => Set<Tenant>();
+    public DbSet<TenantAsset> TenantAssets => Set<TenantAsset>();
     public DbSet<Branch> Branches => Set<Branch>();
     public DbSet<DocumentCounter> DocumentCounters => Set<DocumentCounter>();
     public DbSet<User> Users => Set<User>();
@@ -37,6 +38,14 @@ public class AppDbContext : DbContext
             e.Property(x => x.Ruc).HasMaxLength(11);
             e.HasIndex(x => x.Ruc).IsUnique().HasFilter("[Ruc] IS NOT NULL");
             e.Property(x => x.IgvRate).HasPrecision(5, 4);
+        });
+
+        b.Entity<TenantAsset>(e =>
+        {
+            e.HasKey(x => new { x.TenantId, x.Kind });
+            e.Property(x => x.Kind).HasMaxLength(20);
+            e.Property(x => x.ContentType).HasMaxLength(50);
+            e.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Cascade);
         });
 
         b.Entity<Branch>(e =>

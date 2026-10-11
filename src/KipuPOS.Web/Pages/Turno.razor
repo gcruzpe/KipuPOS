@@ -1,0 +1,232 @@
+@page "/turno"
+@inherits SecurePage
+@inject PosContext Ctx
+
+<PageTitle>Cierre de turno · KipuPOS</PageTitle>
+
+@if (!Allowed) { return; }
+
+<div class="screen">
+    <PosHeader Brand="@Ctx.Branding" Where="@(Ctx.Branding is null ? User.TenantName : Ctx.BranchName(User.BranchId))">
+        @if (closed is null)
+        {
+            <a class="btn btn-on-dark" href="/caja">← Volver a la caja</a>
+        }
+        else
+        {
+            <button type="button" class="btn btn-on-dark" @onclick="LogoutAsync">Salir</button>
+        }
+    </PosHeader>
+
+    @if (loading)
+    {
+        <div class="center-page"><p class="muted">Calculando el turno…</p></div>
+    }
+    else if (loadError is not null)
+    {
+        <div class="center-page">
+            <div class="center-card" style="display: flex; flex-direction: column; gap: 14px">
+                <div class="alert" role="alert">@loadError</div>
+                <a class="btn btn-dark" href="/caja">Ir a la caja</a>
+            </div>
+        </div>
+    }
+    else if (summary is null)
+    {
+        <div class="center-page">
+            <div class="center-card" style="display: flex; flex-direction: column; gap: 14px; text-align: center">
+                <h1 style="font-size: 36px; font-weight: 800">No tienes un turno abierto</h1>
+                <a class="btn btn-primary" href="/caja">Abrir turno en la caja</a>
+            </div>
+        </div>
+    }
+    else
+    {
+        var s = summary;
+        <div class="wrap">
+            <div class="wrap-inner">
+                <div style="display: flex; flex-direction: column; gap: 6px">
+                    <h1 style="font-size: 44px; font-weight: 800; letter-spacing: -0.04em; line-height: 1">@(closed is null ? "Cierre de turno" : "Turno cerrado")</h1>
+                    <p class="muted" style="margin: 0">
+                        @s.Session.CashierName · abierto a las @Fmt.Time(Ctx.ToLocal(s.Session.OpenedAtUtc)) con <span class="mono">@Fmt.Money(s.Session.OpeningCash)</span>
+                        @if (s.Session.ClosedAtUtc is { } c)
+                        {
+                            <text> · cerrado a las @Fmt.Time(Ctx.ToLocal(c))</text>
+                        }
+                    </p>
+                </div>
+
+                <div class="cols">
+                    <section class="col-main" aria-labelledby="resumen">
+                        <div class="kpis">
+                            <div class="kpi">
+                                <div class="band" style="background: var(--grana)"></div>
+                                <div class="kpi-body">
+                                    <span class="label">Ventas del turno</span>
+                                    <span class="value">@Fmt.Money(s.TotalSales)</span>
+                                    <span class="sub">@s.ByPayment.Sum(p => p.Count) tickets · IGV @Fmt.Money(s.TotalIgv)</span>
+                                </div>
+                            </div>
+                            <div class="kpi">
+                                <div class="band" style="background: var(--verde)"></div>
+                                <div class="kpi-body">
+                                    <span class="label">Efectivo esperado</span>
+                                    <span class="value">@Fmt.Money(s.ExpectedCash)</span>
+                                    <span class="sub">Fondo + ventas en efectivo</span>
+                                </div>
+                            </div>
+                            <div class="kpi">
+                                <div class="band" style="background: var(--ocre)"></div>
+                                <div class="kpi-body">
+                                    <span class="label">Anuladas</span>
+                                    <span class="value">@s.VoidedCount</span>
+                                    <span class="sub">@Fmt.Money(s.VoidedTotal) · no suman al total</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="panel">
+                            <div class="panel-head"><h2 id="resumen">Por forma de pago</h2></div>
+                            <div class="tejido-2" aria-hidden="true"></div>
+                            <div class="table-wrap">
+                                <table class="k-table">
+                                    <thead>
+                                        <tr><th scope="col">Forma de pago</th><th scope="col" class="num">Tickets</th><th scope="col" class="num">Total</th></tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var m in Enum.GetValues<PaymentMethod>())
+                                        {
+                                            var p = s.ByPayment.FirstOrDefault(x => x.Method == m);
+                                            <tr>
+                                                <td style="font-weight: 600">@Fmt.Method(m)</td>
+                                                <td class="num">@(p?.Count ?? 0)</td>
+                                                <td class="num">@Fmt.Money(p?.Total ?? 0)</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                    <tfoot>
+                                        <tr>
+                                            <td>Total</td>
+                                            <td class="num">@s.ByPayment.Sum(p => p.Count)</td>
+                                            <td class="num">@Fmt.Money(s.TotalSales)</td>
+                                        </tr>
+                                    </tfoot>
+                                </table>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="col-side panel" aria-labelledby="arqueo">
+                        <div class="panel-head"><h2 id="arqueo">Arqueo de caja</h2></div>
+                        <div class="tejido-2" aria-hidden="true"></div>
+                        <div class="panel-body">
+                            @if (closed is null)
+                            {
+                                <div class="field">
+                                    <label for="contado">Efectivo contado</label>
+                                    <div class="money-input">
+                                        <span>S/</span>
+                                        <input id="contado" type="text" inputmode="decimal" placeholder="0.00"
+                                               @bind="countedText" @bind:event="oninput" />
+                                    </div>
+                                </div>
+                            }
+                            <div style="display: flex; justify-content: space-between; align-items: baseline">
+                                <span class="muted">Esperado</span>
+                                <span class="mono" style="font-size: 18px">@Fmt.Money(s.ExpectedCash)</span>
+                            </div>
+                            @if (closed is not null)
+                            {
+                                <div style="display: flex; justify-content: space-between; align-items: baseline">
+                                    <span class="muted">Contado</span>
+                                    <span class="mono" style="font-size: 18px">@Fmt.Money(s.Session.CountedCash ?? 0)</span>
+                                </div>
+                            }
+                            @if (Difference is { } d)
+                            {
+                                <div class="diff @(d < 0 ? "short" : d > 0 ? "over" : "exact")" role="status">
+                                    <strong>@(d < 0 ? "Faltante" : d > 0 ? "Sobrante" : "Caja cuadrada")</strong>
+                                    <span>@(d > 0 ? "+ " : "")@Fmt.Money(d)</span>
+                                </div>
+                            }
+                            @if (closed is null)
+                            {
+                                <div class="field">
+                                    <label for="nota">Nota (opcional)</label>
+                                    <textarea id="nota" class="input" rows="3" maxlength="500" placeholder="Ej. se dio vuelto de más a un cliente" @bind="note"></textarea>
+                                </div>
+                                @if (actionError is not null)
+                                {
+                                    <div class="alert" role="alert">@actionError</div>
+                                }
+                                <button type="button" class="btn btn-primary btn-lg btn-block" disabled="@(busy || Counted is null)" @onclick="CloseAsync">
+                                    @(busy ? "Cerrando…" : "Cerrar turno")
+                                </button>
+                                <p class="muted" style="margin: 0; font-size: 13px; line-height: 1.45">Al cerrar se guarda el esperado. Si después se anula una venta, este cierre no cambia.</p>
+                            }
+                            else
+                            {
+                                <a class="btn btn-primary btn-lg btn-block" href="/caja">Abrir un nuevo turno</a>
+                            }
+                        </div>
+                    </section>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private bool loading = true, busy;
+    private string? loadError, actionError;
+    private SessionSummaryDto? summary;
+    private SessionSummaryDto? closed;
+    private string countedText = "";
+    private string? note;
+
+    private decimal? Counted => Fmt.TryParseMoney(countedText, out var v) && v >= 0 ? Fmt.Round(v) : null;
+
+    private decimal? Difference => closed is not null
+        ? closed.Session.Difference
+        : Counted is { } c && summary is not null ? c - summary.ExpectedCash : null;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Allowed) return;
+        try
+        {
+            await Ctx.EnsureLoadedAsync();
+            var current = await Api.GetAsync<CashSessionDto>("api/sessions/current");
+            if (current is not null) summary = await Api.GetAsync<SessionSummaryDto>($"api/sessions/{current.Id}/summary");
+        }
+        catch (ApiException ex)
+        {
+            loadError = ex.Message;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task CloseAsync()
+    {
+        if (busy || summary is null || Counted is not { } counted) return;
+        actionError = null;
+        busy = true;
+        try
+        {
+            closed = await Api.PostAsync<SessionSummaryDto>($"api/sessions/{summary.Session.Id}/close",
+                new CloseSessionRequest(counted, string.IsNullOrWhiteSpace(note) ? null : note.Trim()));
+            if (closed is not null) summary = closed;
+        }
+        catch (ApiException ex)
+        {
+            actionError = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+}

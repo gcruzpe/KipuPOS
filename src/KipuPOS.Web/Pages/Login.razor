@@ -1,0 +1,128 @@
+@page "/login"
+@inject AuthSession Auth
+@inject ApiClient Api
+@inject NavigationManager Nav
+
+<PageTitle>Iniciar sesión · KipuPOS</PageTitle>
+
+<div class="login">
+    <section class="login-hero">
+        <div class="login-hero-inner">
+            <div class="login-kipu"><Logo Size="84" WordSize="68" /></div>
+            <div style="display: flex; flex-direction: column; gap: 18px">
+                <h1>Hilos de colores que cuentan tu historia, venta a venta.</h1>
+                <p>Como el quipu llevaba las cuentas del Tahuantinsuyo, KipuPOS lleva las de tus locales: menú del día, turnos de caja y reportes por sucursal.</p>
+            </div>
+            <p class="foot">¿No puedes entrar? Pide a tu administrador que restablezca tu contraseña.</p>
+        </div>
+        <div class="tejido-v" aria-hidden="true"></div>
+    </section>
+
+    <main class="login-main">
+        <form class="login-form" @onsubmit="SubmitAsync" @onsubmit:preventDefault>
+            @if (brand is not null)
+            {
+                <div class="login-brand"><TenantMark Branding="brand" Height="120" /></div>
+            }
+            <div style="display: flex; flex-direction: column; gap: 6px">
+                <h2>Iniciar sesión</h2>
+                <p class="muted" style="margin: 0">@(brand is null ? "Ingresa con el código de tu negocio." : $"Bienvenido a {brand.Name}.")</p>
+            </div>
+            <div class="field">
+                <label for="tenant">Código de negocio</label>
+                <input id="tenant" class="input code" type="text" placeholder="ej. cafe-centro" autocomplete="organization"
+                       autocapitalize="none" spellcheck="false" @bind="tenantCode" @bind:after="LoadBrandingAsync" />
+                <span class="hint">Soporte de KipuPOS: déjalo vacío.</span>
+            </div>
+            <div class="field">
+                <label for="user">Usuario</label>
+                <input id="user" class="input" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" @bind="username" />
+            </div>
+            <div class="field">
+                <label for="pass">Contraseña</label>
+                <input id="pass" class="input" type="password" autocomplete="current-password" @bind="password" />
+            </div>
+            @if (error is not null)
+            {
+                <div class="alert" role="alert">@error</div>
+            }
+            <button type="submit" class="btn btn-primary btn-lg btn-block" disabled="@busy">
+                @(busy ? "Ingresando…" : "Ingresar")
+            </button>
+        </form>
+    </main>
+</div>
+
+@code {
+    private string tenantCode = "";
+    private string username = "";
+    private string password = "";
+    private string? error;
+    private bool busy;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Auth.IsAuthenticated && Auth.Current is { } s)
+        {
+            Nav.NavigateTo(s.MustChangePassword ? "/cambiar-clave" : AppRoutes.HomeFor(s), replace: true);
+            return;
+        }
+        tenantCode = await Auth.GetLastTenantAsync();
+        await LoadBrandingAsync();
+    }
+
+    // Marca del negocio según el código escrito (endpoint público; un código inexistente simplemente no muestra nada)
+    private TenantBrandingDto? brand;
+    private string? brandFor;
+
+    private async Task LoadBrandingAsync()
+    {
+        var code = tenantCode.Trim().ToLowerInvariant();
+        if (code == brandFor) return;
+        brandFor = code;
+        brand = null;
+        if (code.Length == 0) return;
+        try
+        {
+            var found = await Api.GetAsync<TenantBrandingDto>($"api/public/tenants/{Uri.EscapeDataString(code)}/branding");
+            if (brandFor == code) brand = found;
+        }
+        catch (ApiException)
+        {
+            // sin red o código desconocido: el login sigue funcionando sin logo
+        }
+    }
+
+    private async Task SubmitAsync()
+    {
+        if (busy) return;
+        error = null;
+        if (string.IsNullOrWhiteSpace(username) || string.IsNullOrEmpty(password))
+        {
+            error = "Escribe tu usuario y contraseña.";
+            return;
+        }
+
+        busy = true;
+        try
+        {
+            var code = tenantCode.Trim().ToLowerInvariant();
+            var res = await Api.PostAsync<LoginResponse>("api/auth/login",
+                new LoginRequest(code.Length == 0 ? null : code, username.Trim(), password));
+            if (res is null) { error = "Respuesta vacía del servidor."; return; }
+
+            await Auth.SetAsync(res);
+            await Auth.SetLastTenantAsync(code);
+            Nav.NavigateTo(res.MustChangePassword ? "/cambiar-clave" : AppRoutes.HomeFor(res));
+        }
+        catch (ApiException ex)
+        {
+            error = ex.Status == 401 ? "Código de negocio, usuario o contraseña incorrectos." : ex.Message;
+            password = "";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+}

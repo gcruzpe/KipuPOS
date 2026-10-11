@@ -41,13 +41,18 @@ var jwt = builder.Configuration.GetSection("Jwt").Get<JwtOptions>()!;
 if (jwt.Key.Length < 32) throw new InvalidOperationException("Jwt:Key debe tener al menos 32 caracteres.");
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(o => o.TokenValidationParameters = new TokenValidationParameters
+    .AddJwtBearer(o =>
     {
-        ValidateIssuer = true, ValidIssuer = jwt.Issuer,
-        ValidateAudience = true, ValidAudience = jwt.Audience,
-        ValidateLifetime = true,
-        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.Key)),
-        ClockSkew = TimeSpan.FromMinutes(1),
+        // Sin esto el handler renombra "tid" al claim de tenant de Azure AD y el negocio desaparece del usuario (403 en todo)
+        o.MapInboundClaims = false;
+        o.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true, ValidIssuer = jwt.Issuer,
+            ValidateAudience = true, ValidAudience = jwt.Audience,
+            ValidateLifetime = true,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.Key)),
+            ClockSkew = TimeSpan.FromMinutes(1),
+        };
     });
 
 // Con la marca "mcp" (debe cambiar contraseña) solo se puede llamar a change-password ("Authenticated").
@@ -108,6 +113,7 @@ app.MapMenu();
 app.MapSales();
 app.MapUsers();
 app.MapTenantAdmin();
+app.MapBranding();
 app.MapPlatform();
 app.MapReports();
 

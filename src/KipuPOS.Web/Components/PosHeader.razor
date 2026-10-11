@@ -1,0 +1,31 @@
+<header class="k-header">
+    <div class="k-header-left">
+        @if (Brand is not null)
+        {
+            <TenantMark Branding="Brand" OnDark="true" Height="64" />
+            <span class="k-divider" aria-hidden="true"></span>
+            <Logo Size="22" WordSize="16" />
+        }
+        else
+        {
+            <Logo />
+        }
+        @if (!string.IsNullOrEmpty(Where))
+        {
+            <span class="where">@Where</span>
+        }
+        @Left
+    </div>
+    <div class="k-header-right">
+        @ChildContent
+    </div>
+</header>
+<div class="tejido" aria-hidden="true"></div>
+
+@code {
+    // Con negocio: su logo manda y KipuPOS queda como marca pequeña
+    [Parameter] public TenantBrandingDto? Brand { get; set; }
+    [Parameter] public string? Where { get; set; }
+    [Parameter] public RenderFragment? Left { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

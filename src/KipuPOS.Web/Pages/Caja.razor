@@ -1,0 +1,418 @@
+@page "/caja"
+@inherits SecurePage
+@inject PosContext Ctx
+
+<PageTitle>Caja · KipuPOS</PageTitle>
+
+@if (!Allowed) { return; }
+
+<div class="screen">
+    <PosHeader Brand="@Ctx.Branding" Where="@WhereText">
+        <span class="who">@User.FullName@(session is null ? "" : $" · turno desde {Fmt.Time(Ctx.ToLocal(session.OpenedAtUtc))}")</span>
+        @if (Auth.IsAdmin)
+        {
+            <a class="btn btn-on-dark" href="/admin/menu">Administración</a>
+        }
+        @if (session is not null)
+        {
+            <a class="btn btn-on-dark" href="/turno">Cerrar turno</a>
+        }
+        @* Salir no cierra el turno: queda abierto en el servidor y se retoma al volver a entrar *@
+        <button type="button" class="btn btn-on-dark" @onclick="LogoutAsync">Salir</button>
+    </PosHeader>
+
+    @if (loading)
+    {
+        <div class="center-page"><p class="muted">Preparando la caja…</p></div>
+    }
+    else if (loadError is not null)
+    {
+        <div class="center-page">
+            <div class="center-card" style="display: flex; flex-direction: column; gap: 14px">
+                <div class="alert" role="alert">@loadError</div>
+                <button type="button" class="btn btn-dark" @onclick="LoadAsync">Reintentar</button>
+            </div>
+        </div>
+    }
+    else if (session is null)
+    {
+        <div class="center-page">
+            <form class="center-card panel" @onsubmit="OpenSessionAsync" @onsubmit:preventDefault>
+                <div class="panel-head" style="flex-direction: column; align-items: flex-start; gap: 4px">
+                    <h2>Abrir turno</h2>
+                    <p class="muted" style="margin: 0; font-size: 15px">Cuenta el efectivo con el que empiezas la caja.</p>
+                </div>
+                <div class="tejido-2" aria-hidden="true"></div>
+                <div class="panel-body">
+                    <div class="field">
+                        <label for="opening">Fondo inicial</label>
+                        <div class="money-input">
+                            <span>S/</span>
+                            <input id="opening" type="text" inputmode="decimal" @bind="openingText" />
+                        </div>
+                    </div>
+                    @if (actionError is not null)
+                    {
+                        <div class="alert" role="alert">@actionError</div>
+                    }
+                    <button type="submit" class="btn btn-primary btn-lg btn-block" disabled="@busy">
+                        @(busy ? "Abriendo…" : "Abrir turno")
+                    </button>
+                </div>
+            </form>
+        </div>
+    }
+    else
+    {
+        <div class="pos-body">
+            <main class="pos-main">
+                <div class="page-title">
+                    <h1>¿Qué se sirve hoy?</h1>
+                    <span class="muted">@Fmt.LongDate(Ctx.Today) · precios sin IGV</span>
+                </div>
+
+                @if (menuWarning is not null)
+                {
+                    <div class="alert soft">@menuWarning</div>
+                }
+
+                @if (categories.Count == 0)
+                {
+                    <div class="alert soft">Todavía no hay productos a la venta. El administrador debe cargar el catálogo y el menú del día.</div>
+                }
+                else
+                {
+                    <nav aria-label="Categorías" class="pill-row">
+                        @foreach (var c in categories)
+                        {
+                            <button type="button" class="pill" aria-pressed="@(c.Id == selectedCategory ? "true" : "false")"
+                                    @onclick="() => selectedCategory = c.Id">@c.Name</button>
+                        }
+                    </nav>
+
+                    <div class="grid-products">
+                        @foreach (var item in items.Where(i => i.CategoryId == selectedCategory))
+                        {
+                            var qty = QtyOf(item.ProductId);
+                            <div class="p-card">
+                                <span class="band" style="background: @ColorOf(item.CategoryId)" aria-hidden="true"></span>
+                                <button type="button" class="p-card-main" @onclick="() => Add(item)" aria-label="Agregar @item.Name">
+                                    <span class="tags">
+                                        @if (item.SoldOut)
+                                        {
+                                            <span class="tag tag-sold">agotado</span>
+                                        }
+                                        @if (qty > 0)
+                                        {
+                                            <span class="tag tag-qty">× @qty</span>
+                                        }
+                                    </span>
+                                    <span class="name">@item.Name</span>
+                                    <span class="price">@Fmt.Money(item.Price)</span>
+                                </button>
+                                @if (item.MenuEntryId is not null)
+                                {
+                                    <button type="button" class="p-card-flag" title="@(item.SoldOut ? "Marcar disponible" : "Marcar agotado")"
+                                            aria-label="@(item.SoldOut ? "Marcar disponible" : "Marcar agotado") @item.Name"
+                                            @onclick="() => ToggleSoldOutAsync(item)">@(item.SoldOut ? "↺" : "⊘")</button>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+            </main>
+
+            <aside class="pos-aside" aria-label="Ticket actual">
+                <div class="panel">
+                    <div class="panel-head">
+                        <h2>Ticket</h2>
+                        <button type="button" class="pill go" style="min-height: 44px; font-size: 15px; padding: 0 16px"
+                                aria-pressed="@(paraLlevar ? "true" : "false")" disabled="@(taper is null)"
+                                title="@(taper is null ? "Crea un producto llamado «Táper» para usar esta opción" : null)"
+                                @onclick="ToggleParaLlevar">@(paraLlevar ? "✓ Para llevar" : "Para llevar")</button>
+                    </div>
+                    <div class="tejido-2" aria-hidden="true"></div>
+                    <div class="lines">
+                        @if (cart.Count == 0)
+                        {
+                            <p class="empty">Toca un plato para empezar.</p>
+                        }
+                        @foreach (var line in cart)
+                        {
+                            <div class="line">
+                                <div class="info">
+                                    <strong>@line.Name</strong>
+                                    <span>@Fmt.Money(line.UnitPrice) c/u</span>
+                                </div>
+                                <button type="button" class="btn-round" aria-label="Quitar uno de @line.Name" @onclick="() => ChangeQty(line, -1)">−</button>
+                                <span class="qty">@line.Quantity</span>
+                                <button type="button" class="btn-round filled" aria-label="Agregar uno de @line.Name" @onclick="() => ChangeQty(line, 1)">+</button>
+                                <span class="sub">@Fmt.Money(line.UnitPrice * line.Quantity)</span>
+                            </div>
+                        }
+                    </div>
+                    <div class="panel-body">
+                        <dl class="totals">
+                            <dt>Subtotal</dt><dd>@Fmt.Money(Subtotal)</dd>
+                            <dt>IGV @((Ctx.IgvRate * 100).ToString("0.##"))%</dt><dd>@Fmt.Money(Igv)</dd>
+                        </dl>
+                        <div class="grand"><span>Total</span><span>@Fmt.Money(Total)</span></div>
+                        <div class="pay-grid" role="group" aria-label="Forma de pago">
+                            @foreach (var m in Enum.GetValues<PaymentMethod>())
+                            {
+                                <button type="button" class="pill pay" aria-pressed="@(m == payment ? "true" : "false")"
+                                        @onclick="() => payment = m">@Fmt.Method(m)</button>
+                            }
+                        </div>
+                        @if (actionError is not null)
+                        {
+                            <div class="alert" role="alert">@actionError</div>
+                        }
+                        <button type="button" class="btn btn-primary btn-lg btn-block" disabled="@(busy || cart.Count == 0)" @onclick="ChargeAsync">
+                            @(busy ? "Registrando…" : $"Cobrar {Fmt.Money(Total)}")
+                        </button>
+                        @if (toast is not null)
+                        {
+                            <p class="toast" role="status">@toast</p>
+                        }
+                    </div>
+                </div>
+            </aside>
+        </div>
+    }
+</div>
+
+@code {
+    private sealed record PosItem(Guid ProductId, Guid CategoryId, string Name, decimal Price, Guid? MenuEntryId, bool SoldOut);
+
+    private sealed class CartLine(Guid productId, string name, decimal unitPrice)
+    {
+        public Guid ProductId { get; } = productId;
+        public string Name { get; } = name;
+        public decimal UnitPrice { get; } = unitPrice;
+        public int Quantity { get; set; } = 1;
+    }
+
+    private static readonly string[] Palette = ["#9E1F45", "#3A3F7A", "#C98A12", "#3F6B3A"];
+
+    private bool loading = true, busy;
+    private string? loadError, actionError, menuWarning, toast;
+    private CashSessionDto? session;
+    private string openingText = "100.00";
+
+    private List<CategoryDto> categories = [];
+    private List<PosItem> items = [];
+    private Guid selectedCategory;
+    private PosItem? taper;
+
+    private readonly List<CartLine> cart = [];
+    private bool paraLlevar;
+    private PaymentMethod payment = PaymentMethod.Efectivo;
+
+    // Id de la venta en curso: se reutiliza si el envío falla por red, para que el reintento no duplique la venta
+    private Guid? pendingSaleId;
+    private DateTime pendingCreatedAt;
+
+    // Con la marca del negocio en el encabezado basta la sucursal; sin ella, nombre del negocio y sucursal
+    private string WhereText => string.Join(" · ", new[] { Ctx.Branding is null ? User?.TenantName : null, Ctx.BranchName(User?.BranchId) }.Where(s => !string.IsNullOrEmpty(s)));
+
+    private decimal Subtotal => cart.Sum(l => l.UnitPrice * l.Quantity);
+    private decimal Igv => Fmt.Round(Subtotal * Ctx.IgvRate);
+    private decimal Total => Subtotal + Igv;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Allowed) return;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        loading = true;
+        loadError = null;
+        try
+        {
+            await Ctx.EnsureLoadedAsync();
+            session = await Api.GetAsync<CashSessionDto>("api/sessions/current");
+            if (session is not null) await LoadCatalogAsync();
+        }
+        catch (ApiException ex)
+        {
+            loadError = ex.Message;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task LoadCatalogAsync()
+    {
+        var cats = await Api.GetAsync<List<CategoryDto>>("api/categories?onlyActive=true") ?? [];
+        var products = await Api.GetAsync<List<ProductDto>>("api/products?onlyActive=true") ?? [];
+
+        DailyMenuDto? menu = null;
+        menuWarning = null;
+        try
+        {
+            menu = await Api.GetAsync<DailyMenuDto>("api/menu/today");
+        }
+        catch (ApiException ex) when (ex.Status is 400 or 403 or 404)
+        {
+            menuWarning = $"No se pudo cargar el menú del día: {ex.Message}";
+        }
+
+        // Platos de menú: solo los del menú de hoy, al precio del día. El resto, al precio del catálogo.
+        var entries = menu?.Entries.ToDictionary(e => e.ProductId) ?? [];
+        items = products
+            .Select(p => p.IsMenuItem
+                ? entries.TryGetValue(p.Id, out var e) ? new PosItem(p.Id, p.CategoryId, p.Name, e.Price, e.Id, e.SoldOut) : null
+                : new PosItem(p.Id, p.CategoryId, p.Name, p.Price, null, false))
+            .Where(i => i is not null)
+            .Select(i => i!)
+            .ToList();
+
+        if (menu is not null && menu.Entries.Count == 0 && products.Any(p => p.IsMenuItem))
+            menuWarning = "Hoy no hay menú cargado en tu sucursal: los platos de menú no aparecen hasta que el administrador lo cargue.";
+
+        categories = cats.Where(c => items.Any(i => i.CategoryId == c.Id)).ToList();
+        if (!categories.Any(c => c.Id == selectedCategory)) selectedCategory = categories.FirstOrDefault()?.Id ?? Guid.Empty;
+        taper = items.FirstOrDefault(i => IsTaper(i.Name));
+    }
+
+    private static bool IsTaper(string name)
+    {
+        var n = name.Trim().ToLowerInvariant().Replace('á', 'a');
+        return n is "taper" or "táper";
+    }
+
+    private string ColorOf(Guid categoryId)
+    {
+        var i = categories.FindIndex(c => c.Id == categoryId);
+        return Palette[(i < 0 ? 0 : i) % Palette.Length];
+    }
+
+    private int QtyOf(Guid productId) => cart.FirstOrDefault(l => l.ProductId == productId)?.Quantity ?? 0;
+
+    private void CartChanged()
+    {
+        pendingSaleId = null;
+        actionError = null;
+        toast = null;
+    }
+
+    private void Add(PosItem item)
+    {
+        var line = cart.FirstOrDefault(l => l.ProductId == item.ProductId);
+        if (line is null) cart.Add(new CartLine(item.ProductId, item.Name, item.Price));
+        else if (line.Quantity < 99) line.Quantity++;
+        if (taper is not null && item.ProductId == taper.ProductId) paraLlevar = true;
+        CartChanged();
+    }
+
+    private void ChangeQty(CartLine line, int delta)
+    {
+        line.Quantity = Math.Clamp(line.Quantity + delta, 0, 99);
+        if (line.Quantity == 0)
+        {
+            cart.Remove(line);
+            if (taper is not null && line.ProductId == taper.ProductId) paraLlevar = false;
+        }
+        CartChanged();
+    }
+
+    // "Para llevar" agrega el táper como una línea más del ticket
+    private void ToggleParaLlevar()
+    {
+        if (taper is null) return;
+        var line = cart.FirstOrDefault(l => l.ProductId == taper.ProductId);
+        if (paraLlevar)
+        {
+            if (line is not null) cart.Remove(line);
+            paraLlevar = false;
+        }
+        else
+        {
+            if (line is null) cart.Add(new CartLine(taper.ProductId, taper.Name, taper.Price));
+            paraLlevar = true;
+        }
+        CartChanged();
+    }
+
+    private async Task ToggleSoldOutAsync(PosItem item)
+    {
+        actionError = null;
+        try
+        {
+            var updated = await Api.PatchAsync<MenuEntryDto>($"api/menu/entries/{item.MenuEntryId}/sold-out", new SoldOutRequest(!item.SoldOut));
+            var i = items.IndexOf(item);
+            if (i >= 0 && updated is not null) items[i] = item with { SoldOut = updated.SoldOut };
+        }
+        catch (ApiException ex)
+        {
+            actionError = ex.Message;
+        }
+    }
+
+    private async Task OpenSessionAsync()
+    {
+        if (busy) return;
+        actionError = null;
+        if (!Fmt.TryParseMoney(openingText, out var opening) || opening < 0)
+        {
+            actionError = "Escribe un monto válido, por ejemplo 100.00";
+            return;
+        }
+        busy = true;
+        try
+        {
+            session = await Api.PostAsync<CashSessionDto>("api/sessions/open", new OpenSessionRequest(Fmt.Round(opening)));
+            await LoadCatalogAsync();
+        }
+        catch (ApiException ex)
+        {
+            actionError = ex.Message;
+            if (ex.Status == 409) await LoadAsync(); // ya había un turno abierto: se retoma
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task ChargeAsync()
+    {
+        if (busy || session is null || cart.Count == 0) return;
+        actionError = null;
+        toast = null;
+        if (pendingSaleId is null)
+        {
+            pendingSaleId = Guid.NewGuid();
+            pendingCreatedAt = DateTime.UtcNow;
+        }
+
+        busy = true;
+        try
+        {
+            var req = new CreateSaleRequest(pendingSaleId.Value, session.Id, pendingCreatedAt, payment,
+                cart.Select(l => new SaleLineRequest(l.ProductId, l.Quantity, null)).ToList());
+            var sale = await Api.PostAsync<SaleDto>("api/sales", req);
+            if (sale is null) { actionError = "Respuesta vacía del servidor."; return; }
+
+            cart.Clear();
+            paraLlevar = false;
+            pendingSaleId = null;
+            toast = $"Venta {Fmt.Ticket(sale.Number)} registrada · {Fmt.Method(sale.PaymentMethod)} · {Fmt.Money(sale.Total)}";
+            payment = PaymentMethod.Efectivo;
+        }
+        catch (ApiException ex)
+        {
+            actionError = ex.IsNetwork ? ex.Message + " La venta no se duplicará al reintentar." : ex.Message;
+            if (!ex.IsNetwork) pendingSaleId = null;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+}

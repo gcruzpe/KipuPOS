@@ -1,0 +1,145 @@
+@page "/admin/negocio"
+@inherits SecurePage
+@inject PosContext Ctx
+
+<PageTitle>Mi negocio · KipuPOS</PageTitle>
+
+@if (!Allowed) { return; }
+
+<AdminShell Brand="@Ctx.Branding">
+    <div style="display: flex; flex-direction: column; gap: 6px">
+        <h1>Mi negocio</h1>
+        <p class="muted" style="margin: 0">@(Ctx.Tenant?.Name) · código <span class="mono">@(Ctx.Tenant?.Code)</span></p>
+    </div>
+
+    @if (loadError is not null)
+    {
+        <div class="alert" role="alert">@loadError</div>
+    }
+
+    <div class="panel">
+        <div class="panel-head" style="flex-direction: column; align-items: flex-start; gap: 4px">
+            <h2>Logo</h2>
+            <p class="muted" style="margin: 0; font-size: 15px">Aparece en el inicio de sesión, la caja y el panel. PNG con fondo transparente, JPG o WebP, hasta 512 KB.</p>
+        </div>
+        <div class="tejido-2" aria-hidden="true"></div>
+        <div class="panel-body">
+            <div class="logo-slots">
+                @foreach (var slot in Slots)
+                {
+                    var version = slot.Kind == LogoKinds.Light ? Ctx.Branding?.LogoVersion : Ctx.Branding?.LogoDarkVersion;
+                    <section class="logo-slot">
+                        <div class="logo-preview @(slot.OnDark ? "on-dark" : "")">
+                            @if (version is { } v && Ctx.Branding is { } b)
+                            {
+                                <img src="@Api.LogoUrl(b.Code, slot.Kind, v)" alt="@slot.Title" />
+                            }
+                            else
+                            {
+                                <span>Sin logo</span>
+                            }
+                        </div>
+                        <div style="display: flex; flex-direction: column; gap: 4px">
+                            <h3 style="font-size: 18px; font-weight: 800">@slot.Title</h3>
+                            <p class="muted" style="margin: 0; font-size: 14px">@slot.Help</p>
+                        </div>
+                        <div class="toolbar">
+                            <label class="btn btn-dark file-btn @(busyKind is not null ? "disabled" : "")">
+                                @(busyKind == slot.Kind ? "Subiendo…" : version is null ? "Subir logo" : "Reemplazar")
+                                <InputFile accept="image/png,image/jpeg,image/webp" disabled="@(busyKind is not null)"
+                                           OnChange="e => UploadAsync(slot.Kind, e)" />
+                            </label>
+                            @if (version is not null)
+                            {
+                                <button type="button" class="btn btn-outline" disabled="@(busyKind is not null)" @onclick="() => RemoveAsync(slot.Kind)">Quitar</button>
+                            }
+                        </div>
+                    </section>
+                }
+            </div>
+            @if (actionError is not null)
+            {
+                <div class="alert" role="alert">@actionError</div>
+            }
+            @if (toast is not null)
+            {
+                <p class="toast" role="status" style="align-self: flex-start">@toast</p>
+            }
+        </div>
+    </div>
+</AdminShell>
+
+@code {
+    private sealed record Slot(string Kind, string Title, string Help, bool OnDark);
+
+    private static readonly Slot[] Slots =
+    [
+        new(LogoKinds.Light, "Para fondos claros", "Logo en su color original (tinta oscura). Se usa en el inicio de sesión y en los tickets.", false),
+        new(LogoKinds.Dark, "Para fondos oscuros", "Versión clara del logo para el encabezado de la caja y el panel. Si no la subes, el logo claro se muestra sobre una placa.", true),
+    ];
+
+    private const long MaxBytes = 512 * 1024;
+
+    protected override IReadOnlyCollection<string> AllowedRoles => [Roles.Admin];
+
+    private string? loadError, actionError, toast, busyKind;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Allowed) return;
+        try { await Ctx.EnsureLoadedAsync(); }
+        catch (ApiException ex) { loadError = ex.Message; }
+    }
+
+    private async Task UploadAsync(string kind, InputFileChangeEventArgs e)
+    {
+        actionError = null;
+        toast = null;
+        var file = e.File;
+        if (file.Size > MaxBytes) { actionError = "El logo pesa más de 512 KB. Reduce su tamaño e inténtalo de nuevo."; return; }
+
+        busyKind = kind;
+        try
+        {
+            await using var stream = file.OpenReadStream(MaxBytes);
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            var branding = await Api.PutAsync<TenantBrandingDto>($"api/tenant/{kind}", new SetLogoRequest(Convert.ToBase64String(ms.ToArray())));
+            Ctx.SetBranding(branding);
+            toast = "Logo actualizado.";
+        }
+        catch (ApiException ex)
+        {
+            actionError = ex.Message;
+        }
+        catch (IOException)
+        {
+            actionError = "No se pudo leer el archivo.";
+        }
+        finally
+        {
+            busyKind = null;
+        }
+    }
+
+    private async Task RemoveAsync(string kind)
+    {
+        actionError = null;
+        toast = null;
+        busyKind = kind;
+        try
+        {
+            await Api.DeleteAsync<object>($"api/tenant/{kind}");
+            Ctx.SetBranding(await Api.GetAsync<TenantBrandingDto>("api/tenant/branding"));
+            toast = "Logo quitado.";
+        }
+        catch (ApiException ex)
+        {
+            actionError = ex.Message;
+        }
+        finally
+        {
+            busyKind = null;
+        }
+    }
+}

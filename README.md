@@ -17,6 +17,18 @@ Con ese usuario se crean los negocios (clientes). Flujo completo en `KipuPOS.htt
 
 En producción, por variables de entorno: `Jwt__Key`, `ConnectionStrings__Default`, `Seed__PlatformPassword`, `Cors__Origins__0`.
 
+## Frontend (Blazor WebAssembly) – `src/KipuPOS.Web`
+```
+dotnet run --project src/KipuPOS.Api --urls "https://localhost:7100;http://localhost:5100"
+dotnet run --project src/KipuPOS.Web --launch-profile https      # https://localhost:7200 (origen permitido en Cors:Origins)
+python tools/seed-demo.py                                       # opcional: negocio "kipu-demo" con catálogo, menú de hoy y cajero
+```
+- La URL de la API está en `wwwroot/appsettings.json` (`ApiBaseUrl`). Reutiliza los DTOs de `KipuPOS.Shared`.
+- Pantallas: inicio de sesión, cambio de contraseña obligatorio, caja (abrir turno, menú del día, para llevar con táper, cobro idempotente), cierre de turno con arqueo, menú del día (Admin) y negocios (Plataforma).
+- Estilo "Andina contemporánea": tokens en `wwwroot/css/app.css` (`--grana`, `--ocre`, `--verde`, `--indigo`…), fuentes Bricolage Grotesque + DM Mono.
+- El token se guarda en `localStorage`; un 401 cierra la sesión y vuelve al login.
+- Marca del negocio: cada negocio sube dos logos en **Mi negocio** — `logo` (para fondos claros: login, tickets) y `logo-dark` (para fondos oscuros: encabezado y panel). Con uno solo, se muestra sobre una placa. Logos de clientes preparados en `assets/clientes/`.
+
 ## Multi-tenencia
 - **Una base de datos compartida**; cada tabla de un negocio lleva `TenantId`.
 - Filtros globales de EF Core (`HasQueryFilter`): ninguna consulta ve datos de otro negocio. El negocio sale del **token** (claim `tid`), nunca del cuerpo de la petición.
@@ -33,6 +45,9 @@ En producción, por variables de entorno: `Jwt__Key`, `ConnectionStrings__Defaul
 | POST /api/auth/change-password | autenticado | devuelve token nuevo |
 | GET/POST/PUT /api/platform/tenants | Platform | alta de negocio = negocio + sucursal + admin (contraseña temporal) |
 | GET /api/tenant | negocio | datos del propio negocio |
+| GET /api/public/tenants/{code}/branding · /logo · /logo-dark | anónimo | nombre y logos de un negocio activo (para el login) |
+| GET /api/tenant/branding · PUT/DELETE /api/tenant/{logo\|logo-dark} | negocio · Admin | PNG/JPG/WebP en base64, máx. 512 KB (SVG no) |
+| PUT/DELETE /api/platform/tenants/{id}/{logo\|logo-dark} | Platform | dejar el logo listo al dar de alta |
 | GET /api/branches · POST/PUT /api/branches | negocio · Admin | al menos una sucursal activa |
 | GET /api/categories, /api/products | negocio | `onlyActive`, `categoryId` |
 | POST/PUT/DELETE categorías y productos | Admin | DELETE = desactivar |
