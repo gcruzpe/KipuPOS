@@ -26,6 +26,7 @@ dotnet ef migrations add <Nombre> -p src/KipuPOS.Api --configuration Release   #
 - Usuarios de prueba y contraseñas: constantes al inicio de `tools/seed-demo.py`. No repetirlas en el chat; apuntar a ese archivo.
 - Visual Studio con la API corriendo bloquea `bin/Debug`: compilar a otra salida (`-o`) o en Release. No lanzar dos `dotnet run` en paralelo: chocan al compilar `KipuPOS.Shared`.
 - Puertos fijos sin depender del perfil: API en `appsettings.Development.json` (`Urls`), Web con `_RunExtraArguments --urls` en el csproj.
+- **Probar sin tocar la base ni el VS del usuario:** instancia aparte `sqllocaldb create KipuTest -s`, API con `ConnectionStrings__Default=Server=(localdb)\KipuTest;Database=KipuPOS_Test;...` y `--urls http://localhost:5110`, frontend con `-p:WasmApplicationEnvironmentName=Test -p:_RunExtraArguments="--urls http://localhost:5300"` y un `wwwroot/appsettings.Test.json` temporal. Al terminar: DROP DATABASE, `sqllocaldb delete KipuTest` y borrar el json. (En .NET 10 el entorno del WASM se fija al compilar; el encabezado del servidor no lo cambia.)
 - LocalDB ("SQL Server process failed to start"): una instancia arrancada desde la consola de Claude no la ve Visual Studio, que intenta arrancar otra con los mismos archivos y falla. **Al terminar las pruebas, detenerla con `sqllocaldb stop MSSQLLocalDB`** (si quedó colgada: `-k`) y no usar `sqllocaldb start`; que la arranque la propia API desde VS.
 
 ## Reglas que no se negocian

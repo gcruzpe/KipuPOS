@@ -1,0 +1,37 @@
+@* Barras verticales de una sola serie (un color). La barra máxima se resalta; el valor sale al pasar el cursor o tocar. *@
+@if (Items.Count == 0 || Items.All(i => i.Total == 0))
+{
+    <p class="chart-empty">Sin ventas en este período.</p>
+}
+else
+{
+    var max = Items.Max(i => i.Total);
+    var step = Math.Max(1, (int)Math.Ceiling(Items.Count / (double)MaxLabels));
+    <figure class="vchart" role="img" aria-label="@AriaLabel">
+        <div class="vchart-plot" style="height: @(Height)px">
+            @for (var i = 0; i < Items.Count; i++)
+            {
+                var it = Items[i];
+                var pct = max == 0 ? 0 : Math.Max(it.Total > 0 ? 2 : 0, (double)(it.Total / max) * 100);
+                <div class="vbar-col" tabindex="0" aria-label="@it.Label: @Fmt.Money(it.Total), @it.Count @CountWord">
+                    <div class="vbar @(it.Total == max ? "peak" : "")" style="height: @pct.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)%"></div>
+                    <span class="vbar-tip"><strong>@it.Label</strong><br />@Fmt.Money(it.Total)<br />@it.Count @CountWord</span>
+                </div>
+            }
+        </div>
+        <div class="vchart-axis" aria-hidden="true">
+            @for (var i = 0; i < Items.Count; i++)
+            {
+                <span>@(i % step == 0 ? Items[i].Label : "")</span>
+            }
+        </div>
+    </figure>
+}
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<LabeledAmountDto> Items { get; set; } = [];
+    [Parameter] public int Height { get; set; } = 200;
+    [Parameter] public int MaxLabels { get; set; } = 12;
+    [Parameter] public string CountWord { get; set; } = "tickets";
+    [Parameter] public string AriaLabel { get; set; } = "Gráfico de barras";
+}

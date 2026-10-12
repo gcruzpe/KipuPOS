@@ -1,0 +1,33 @@
+@* Ranking en barras horizontales con etiqueta, monto y participación: se lee sin depender del color. *@
+@if (Items.Count == 0)
+{
+    <p class="chart-empty">Sin datos en este período.</p>
+}
+else
+{
+    var max = Items.Max(i => i.Total);
+    var sum = Items.Sum(i => i.Total);
+    <ul class="hbars" aria-label="@AriaLabel">
+        @foreach (var it in Items.Take(Take))
+        {
+            var pct = max == 0 ? 0 : (double)(it.Total / max) * 100;
+            var share = sum == 0 ? 0 : it.Total / sum * 100;
+            <li class="hbar-row">
+                <span class="hbar-label">@it.Label</span>
+                <span class="hbar-track" aria-hidden="true"><span class="hbar-fill" style="width: @pct.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)%"></span></span>
+                <span class="hbar-value">@Fmt.Money(it.Total) <span class="muted">· @share.ToString("0", System.Globalization.CultureInfo.InvariantCulture)%</span></span>
+                @if (!string.IsNullOrEmpty(CountWord))
+                {
+                    <span class="hbar-count muted">@it.Count @CountWord</span>
+                }
+            </li>
+        }
+    </ul>
+}
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<LabeledAmountDto> Items { get; set; } = [];
+    [Parameter] public int Take { get; set; } = 10;
+    [Parameter] public string? CountWord { get; set; }
+    [Parameter] public string AriaLabel { get; set; } = "Ranking";
+}

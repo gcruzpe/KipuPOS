@@ -1,0 +1,336 @@
+@page "/admin/reportes"
+@inherits SecurePage
+@inject PosContext Ctx
+
+<PageTitle>Reportes · KipuPOS</PageTitle>
+
+@if (!Allowed) { return; }
+
+<AdminShell Brand="@Ctx.Branding">
+    <div style="display: flex; flex-direction: column; gap: 6px">
+        <h1>Reportes</h1>
+        <p class="muted" style="margin: 0">@PeriodText@(report is null ? "" : $" · comparado con {PreviousText}")</p>
+    </div>
+
+    <div class="report-filters">
+        <div class="pill-row" role="group" aria-label="Período">
+            @foreach (var p in Presets)
+            {
+                <button type="button" class="pill" aria-pressed="@(preset == p.Key ? "true" : "false")" @onclick="() => SelectPresetAsync(p.Key)">@p.Label</button>
+            }
+            <button type="button" class="pill" aria-pressed="@(preset == "custom" ? "true" : "false")" @onclick="() => preset = custom ? preset : StartCustom()">Personalizado</button>
+        </div>
+        <div class="toolbar">
+            @if (preset == "custom")
+            {
+                <div class="field">
+                    <label for="from" style="font-size: 14px">Desde</label>
+                    <input id="from" class="select mono" type="date" @bind="customFrom" />
+                </div>
+                <div class="field">
+                    <label for="to" style="font-size: 14px">Hasta</label>
+                    <input id="to" class="select mono" type="date" @bind="customTo" />
+                </div>
+                <button type="button" class="btn btn-dark" @onclick="ApplyCustomAsync">Aplicar</button>
+            }
+            @if (Ctx.Branches.Count > 1)
+            {
+                <div class="field">
+                    <label for="suc" style="font-size: 14px">Sucursal</label>
+                    <select id="suc" class="select" value="@(branchId?.ToString() ?? "")" @onchange="OnBranchChanged">
+                        <option value="">Todas las sucursales</option>
+                        @foreach (var b in Ctx.Branches)
+                        {
+                            <option value="@b.Id">@b.Name</option>
+                        }
+                    </select>
+                </div>
+            }
+        </div>
+    </div>
+
+    @if (error is not null)
+    {
+        <div class="alert" role="alert">@error</div>
+    }
+    else if (report is null)
+    {
+        <p class="muted">Calculando…</p>
+    }
+    else
+    {
+        var c = report.Current;
+        var p = report.Previous;
+        <div class="kpis">
+            <div class="kpi">
+                <div class="band" style="background: var(--grana)"></div>
+                <div class="kpi-body">
+                    <span class="label">Ventas (con IGV)</span>
+                    <span class="value">@Fmt.Money(c.Total)</span>
+                    @Delta(c.Total, p.Total)
+                    <span class="sub">Neto @Fmt.Money(c.Net) · IGV @Fmt.Money(c.Igv)</span>
+                </div>
+            </div>
+            <div class="kpi">
+                <div class="band" style="background: var(--indigo)"></div>
+                <div class="kpi-body">
+                    <span class="label">Tickets</span>
+                    <span class="value">@c.Tickets</span>
+                    @Delta(c.Tickets, p.Tickets)
+                    <span class="sub">Ventas válidas</span>
+                </div>
+            </div>
+            <div class="kpi">
+                <div class="band" style="background: var(--verde)"></div>
+                <div class="kpi-body">
+                    <span class="label">Ticket promedio</span>
+                    <span class="value">@Fmt.Money(c.AverageTicket)</span>
+                    @Delta(c.AverageTicket, p.AverageTicket)
+                    <span class="sub">Cuánto gasta cada cliente</span>
+                </div>
+            </div>
+            <div class="kpi">
+                <div class="band" style="background: var(--ocre)"></div>
+                <div class="kpi-body">
+                    <span class="label">Anuladas</span>
+                    <span class="value">@c.VoidedCount</span>
+                    <span class="sub">@Fmt.Money(c.VoidedTotal) · @(c.Tickets + c.VoidedCount == 0 ? "0" : (c.VoidedCount * 100m / (c.Tickets + c.VoidedCount)).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture))% de los tickets</span>
+                    <span class="sub">Antes: @p.VoidedCount (@Fmt.Money(p.VoidedTotal))</span>
+                </div>
+            </div>
+        </div>
+
+        <section class="panel" aria-labelledby="t-trend">
+            <div class="panel-head">
+                <h2 id="t-trend">Ventas por @(report.TrendUnit switch { "hour" => "hora", "month" => "mes", _ => "día" })</h2>
+                <button type="button" class="btn btn-outline btn-sm" @onclick="() => trendAsTable = !trendAsTable">@(trendAsTable ? "Ver gráfico" : "Ver como tabla")</button>
+            </div>
+            <div class="tejido-2" aria-hidden="true"></div>
+            <div class="panel-body">
+                @if (trendAsTable)
+                {
+                    <div class="table-wrap">
+                        <table class="k-table">
+                            <thead><tr><th scope="col">Período</th><th scope="col" class="num">Tickets</th><th scope="col" class="num">Ventas</th></tr></thead>
+                            <tbody>
+                                @foreach (var t in report.Trend)
+                                {
+                                    <tr><td>@t.Label</td><td class="num">@t.Count</td><td class="num">@Fmt.Money(t.Total)</td></tr>
+                                }
+                            </tbody>
+                            <tfoot><tr><td>Total</td><td class="num">@c.Tickets</td><td class="num">@Fmt.Money(c.Total)</td></tr></tfoot>
+                        </table>
+                    </div>
+                }
+                else
+                {
+                    <VBarChart Items="report.Trend" Height="220" AriaLabel="@($"Ventas por período. Total {Fmt.Money(c.Total)}")" />
+                }
+            </div>
+        </section>
+
+        <div class="report-grid">
+            <section class="panel" aria-labelledby="t-hours">
+                <div class="panel-head"><h2 id="t-hours">Horas pico</h2>@Peak(report.ByHourOfDay)</div>
+                <div class="tejido-2" aria-hidden="true"></div>
+                <div class="panel-body"><VBarChart Items="report.ByHourOfDay" Height="170" MaxLabels="14" AriaLabel="Ventas por hora del día" /></div>
+            </section>
+            <section class="panel" aria-labelledby="t-week">
+                <div class="panel-head"><h2 id="t-week">Día de la semana</h2>@Peak(report.ByWeekday)</div>
+                <div class="tejido-2" aria-hidden="true"></div>
+                <div class="panel-body"><VBarChart Items="report.ByWeekday" Height="170" AriaLabel="Ventas por día de la semana" /></div>
+            </section>
+
+            <section class="panel" aria-labelledby="t-pay">
+                <div class="panel-head"><h2 id="t-pay">Formas de pago</h2></div>
+                <div class="tejido-2" aria-hidden="true"></div>
+                <div class="panel-body"><HBarList Items="report.ByPayment" CountWord="pagos" AriaLabel="Ventas por forma de pago" /></div>
+            </section>
+            <section class="panel" aria-labelledby="t-channel">
+                <div class="panel-head"><h2 id="t-channel">Mesas y mostrador</h2></div>
+                <div class="tejido-2" aria-hidden="true"></div>
+                <div class="panel-body">
+                    <HBarList Items="report.ByChannel" CountWord="tickets" AriaLabel="Ventas en mesas y en mostrador" />
+                    @foreach (var ch in report.ByChannel)
+                    {
+                        <span class="muted" style="font-size: 13px">@ch.Label: ticket promedio @Fmt.Money(ch.Count == 0 ? 0 : Fmt.Round(ch.Total / ch.Count))</span>
+                    }
+                </div>
+            </section>
+
+            <section class="panel" aria-labelledby="t-cat">
+                <div class="panel-head"><h2 id="t-cat">Categorías</h2><span class="muted" style="font-size: 13px">sin IGV</span></div>
+                <div class="tejido-2" aria-hidden="true"></div>
+                <div class="panel-body"><HBarList Items="report.ByCategory" CountWord="unid." AriaLabel="Ventas por categoría" /></div>
+            </section>
+            <section class="panel" aria-labelledby="t-top">
+                <div class="panel-head"><h2 id="t-top">Top 10 productos</h2><span class="muted" style="font-size: 13px">sin IGV</span></div>
+                <div class="tejido-2" aria-hidden="true"></div>
+                <div class="table-wrap">
+                    <table class="k-table">
+                        <thead><tr><th scope="col">#</th><th scope="col">Producto</th><th scope="col" class="num">Unid.</th><th scope="col" class="num">Ingreso</th></tr></thead>
+                        <tbody>
+                            @if (report.TopProducts.Count == 0)
+                            {
+                                <tr class="empty-row"><td colspan="4">Sin ventas en este período.</td></tr>
+                            }
+                            @for (var i = 0; i < report.TopProducts.Count; i++)
+                            {
+                                var tp = report.TopProducts[i];
+                                <tr><td class="mono muted">@(i + 1)</td><td style="font-weight: 700">@tp.Name</td><td class="num">@tp.Units</td><td class="num">@Fmt.Money(tp.Revenue)</td></tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            @if (report.ByBranch.Count > 1 || branchId is null && Ctx.Branches.Count > 1)
+            {
+                <section class="panel" aria-labelledby="t-branch">
+                    <div class="panel-head"><h2 id="t-branch">Sucursales</h2></div>
+                    <div class="tejido-2" aria-hidden="true"></div>
+                    <div class="panel-body"><HBarList Items="report.ByBranch" CountWord="tickets" AriaLabel="Ventas por sucursal" /></div>
+                </section>
+            }
+            <section class="panel" aria-labelledby="t-cashier">
+                <div class="panel-head"><h2 id="t-cashier">Cajeros</h2></div>
+                <div class="tejido-2" aria-hidden="true"></div>
+                <div class="panel-body"><HBarList Items="report.ByCashier" CountWord="tickets" AriaLabel="Ventas por cajero" /></div>
+            </section>
+        </div>
+    }
+</AdminShell>
+
+@code {
+    private static readonly (string Key, string Label)[] Presets =
+    [
+        ("today", "Hoy"), ("yesterday", "Ayer"), ("7d", "Últimos 7 días"), ("30d", "Últimos 30 días"), ("month", "Este mes"), ("prevmonth", "Mes anterior")
+    ];
+
+    protected override IReadOnlyCollection<string> AllowedRoles => [Roles.Admin];
+
+    private string preset = "7d";
+    private bool custom => preset == "custom";
+    private DateOnly fromDate, toDate; // toDate exclusivo, fechas locales del negocio
+    private DateOnly customFrom, customTo;
+    private Guid? branchId;
+    private ManagementReportDto? report;
+    private string? error;
+    private bool trendAsTable;
+
+    private TimeSpan Offset => TimeSpan.FromHours(Ctx.Tenant?.UtcOffsetHours ?? -5);
+    private static readonly System.Globalization.CultureInfo Inv = System.Globalization.CultureInfo.InvariantCulture;
+
+    private string PeriodText => toDate <= fromDate ? "" // primer dibujo, antes de calcular el período
+        : fromDate.AddDays(1) == toDate
+        ? Capitalize(Fmt.LongDate(fromDate))
+        : $"Del {fromDate.ToString("dd/MM/yyyy", Inv)} al {toDate.AddDays(-1).ToString("dd/MM/yyyy", Inv)}";
+
+    private string PreviousText
+    {
+        get
+        {
+            if (report is null) return "";
+            var pf = DateOnly.FromDateTime(report.PreviousFromUtc + Offset);
+            var pt = DateOnly.FromDateTime(report.FromUtc + Offset).AddDays(-1);
+            return pf == pt ? Fmt.LongDate(pf) : $"{pf.ToString("dd/MM", Inv)}–{pt.ToString("dd/MM", Inv)}";
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Allowed) return;
+        try
+        {
+            await Ctx.EnsureLoadedAsync();
+            await SelectPresetAsync("7d");
+        }
+        catch (ApiException ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private async Task SelectPresetAsync(string key)
+    {
+        var today = Ctx.Today;
+        (fromDate, toDate) = key switch
+        {
+            "today" => (today, today.AddDays(1)),
+            "yesterday" => (today.AddDays(-1), today),
+            "30d" => (today.AddDays(-29), today.AddDays(1)),
+            "month" => (new DateOnly(today.Year, today.Month, 1), today.AddDays(1)),
+            "prevmonth" => (new DateOnly(today.Year, today.Month, 1).AddMonths(-1), new DateOnly(today.Year, today.Month, 1)),
+            _ => (today.AddDays(-6), today.AddDays(1)),
+        };
+        preset = key;
+        await LoadAsync();
+    }
+
+    private string StartCustom()
+    {
+        customFrom = fromDate;
+        customTo = toDate.AddDays(-1);
+        return "custom";
+    }
+
+    private async Task ApplyCustomAsync()
+    {
+        if (customTo < customFrom) { error = "La fecha final no puede ser anterior a la inicial."; return; }
+        if (customTo.DayNumber - customFrom.DayNumber > 365) { error = "El rango máximo es de un año."; return; }
+        fromDate = customFrom;
+        toDate = customTo.AddDays(1);
+        await LoadAsync();
+    }
+
+    private async Task OnBranchChanged(ChangeEventArgs e)
+    {
+        branchId = Guid.TryParse(e.Value?.ToString(), out var id) ? id : null;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        error = null;
+        report = null;
+        try
+        {
+            var from = new DateTimeOffset(fromDate.ToDateTime(TimeOnly.MinValue), Offset).ToString("o");
+            var to = new DateTimeOffset(toDate.ToDateTime(TimeOnly.MinValue), Offset).ToString("o");
+            var url = $"api/reports/management?from={Uri.EscapeDataString(from)}&to={Uri.EscapeDataString(to)}";
+            if (branchId is { } b) url += $"&branchId={b}";
+            report = await Api.GetAsync<ManagementReportDto>(url);
+        }
+        catch (ApiException ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    // Variación contra el período anterior: flecha + porcentaje (no solo color)
+    private RenderFragment Delta(decimal current, decimal previous) => __builder =>
+    {
+        if (previous == 0)
+        {
+            <span class="delta flat">@(current == 0 ? "Sin cambios" : "Sin datos del período anterior")</span>
+        }
+        else
+        {
+            var change = (current - previous) / previous * 100;
+            var cls = change > 0.05m ? "up" : change < -0.05m ? "down" : "flat";
+            var arrow = cls == "up" ? "▲" : cls == "down" ? "▼" : "■";
+            <span class="delta @cls">@arrow @Math.Abs(change).ToString("0.#", Inv)% vs período anterior</span>
+        }
+    };
+
+    private RenderFragment Peak(IReadOnlyList<LabeledAmountDto> items) => __builder =>
+    {
+        var top = items.Where(i => i.Total > 0).OrderByDescending(i => i.Total).FirstOrDefault();
+        if (top is not null)
+        {
+            <span class="muted" style="font-size: 13px">Pico: <strong>@top.Label</strong></span>
+        }
+    };
+
+    private static string Capitalize(string s) => s.Length == 0 ? s : char.ToUpperInvariant(s[0]) + s[1..];
+}

@@ -84,6 +84,7 @@ python tools/seed-demo.py                                       # opcional: nego
 | GET /api/sales/{id} · POST void · POST reprint | Admin o dueño con turno abierto | anular exige motivo |
 | GET/POST/PUT /api/users · POST {id}/reset-password | Admin | cajero requiere `branchId` |
 | GET /api/reports/summary, /top-products | Admin | `from` inclusivo, `to` exclusivo, `branchId` opcional |
+| GET /api/reports/management | Admin | reporte gerencial: KPIs vs período anterior, tendencia, horas pico, día de la semana, formas de pago, mesas/mostrador, categorías, top 10, sucursales, cajeros |
 
 ## Reglas de negocio
 - Precio y nombre salen del servidor y se copian en cada línea de venta.

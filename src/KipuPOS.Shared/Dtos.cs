@@ -100,6 +100,15 @@ public record SalesBucketDto(string Label, decimal Total, int Count);
 public record SalesSummaryDto(decimal Total, int Count, decimal AverageTicket, int VoidedCount, decimal VoidedTotal, IReadOnlyList<SalesBucketDto> Buckets);
 public record TopProductDto(string Name, int Units, decimal Revenue);
 
+// Reporte gerencial: un período y el período anterior de igual duración para comparar.
+// Total y montos por forma de pago/sucursal/cajero/canal/tiempo: con IGV. Categorías y productos: sin IGV (lo vendido).
+public record KpiDto(decimal Total, decimal Net, decimal Igv, int Tickets, decimal AverageTicket, int VoidedCount, decimal VoidedTotal);
+public record LabeledAmountDto(string Label, decimal Total, int Count);
+public record ManagementReportDto(DateTime FromUtc, DateTime ToUtc, DateTime PreviousFromUtc, KpiDto Current, KpiDto Previous,
+    string TrendUnit, IReadOnlyList<LabeledAmountDto> Trend, IReadOnlyList<LabeledAmountDto> ByHourOfDay, IReadOnlyList<LabeledAmountDto> ByWeekday,
+    IReadOnlyList<LabeledAmountDto> ByPayment, IReadOnlyList<LabeledAmountDto> ByChannel, IReadOnlyList<LabeledAmountDto> ByCategory,
+    IReadOnlyList<LabeledAmountDto> ByBranch, IReadOnlyList<LabeledAmountDto> ByCashier, IReadOnlyList<TopProductDto> TopProducts);
+
 // ---------- Menú del día (por sucursal; precio sin IGV, por plato y por fecha) ----------
 public record MenuEntryDto(Guid Id, Guid ProductId, string Name, decimal Price, bool SoldOut);
 public record DailyMenuDto(DateOnly Date, IReadOnlyList<MenuEntryDto> Entries);

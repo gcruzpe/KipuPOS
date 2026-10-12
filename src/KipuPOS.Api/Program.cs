@@ -107,6 +107,10 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapGet("/health", () => Results.Ok("ok")).AllowAnonymous();
+// La API no tiene páginas: quien la abra en el navegador ve a dónde ir en lugar de un 404
+app.MapGet("/", () => Results.Text(
+    "API de KipuPOS funcionando. Esta dirección no es la aplicación: abre la app web (en desarrollo, https://localhost:7200).",
+    "text/plain; charset=utf-8")).AllowAnonymous().ExcludeFromDescription();
 app.MapAuth();
 app.MapCatalog();
 app.MapSessions();

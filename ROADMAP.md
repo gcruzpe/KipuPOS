@@ -47,7 +47,8 @@ Más adelante, si hace falta: comanda impresa o pantalla para cocina/barra, rol 
 ## Fase 3 · Gestión del negocio
 Lo que el dueño usa para decidir, una vez que la caja funciona a diario.
 
-- [ ] Reportes: ventas por día y hora, más vendidos, por sucursal y forma de pago
+- [x] Reportes gerenciales (Admin → Reportes): ventas, tickets y ticket promedio contra el período anterior; tendencia; horas pico; día de la semana; formas de pago; mesas vs mostrador; categorías; top 10; sucursales; cajeros
+- [ ] Exportar reportes a Excel/PDF y envío automático del resumen diario al dueño
 - [ ] Historial de turnos y diferencias de caja
 - [ ] Historial de ventas con filtros (admin)
 - [ ] Datos del negocio y logo desde el panel de plataforma
